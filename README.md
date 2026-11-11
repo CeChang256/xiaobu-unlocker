@@ -7,7 +7,7 @@
 （原生卡 / 快应用卡 / 系统工具卡），不新增任何自己的 UI。
 
 - 模块包名：`io.github.cechang256.xiaobu`
-- 当前版本：**1.25**（versionCode 19）
+- 当前版本：**1.30**（versionCode 24）
 - 注入进程：**只有** `com.oplus.pantanal.ums`（决策引擎），不碰桌面进程
 - 已验证环境：一加 PLG110 / Android 17 / ColorOS `PLG110_17.0.0.105(CN01)` / LSPosed 2.1.1
 
@@ -18,7 +18,7 @@
 | 能力 | 说明 |
 |---|---|
 | 左右栏独立选卡 | 两栏各自从系统的卡片池里选，互不影响 |
-| 左右对调 | 把两栏内容互换（会看到约 1 秒系统卡，机制固有，见下文） |
+| 左右对调 | 把两栏内容互换（切换过程中会短暂显示系统卡） |
 | 切回系统样式 | 选系统的「系统工具+应用建议」页签保存即可，模块配置保留 |
 | 编辑器体验 | 选中蓝框自动落到当前栏那张卡、卡片池标题按栏显示「左栏 · 卡名 / 右栏 · 卡名」 |
 | 抗进程被杀 | 对调途中进程被杀，桌面不会永久停在系统卡（`roundtrip_at` 自愈） |
@@ -98,7 +98,7 @@ $env:ANDROID_HOME="C:\Users\me\AppData\Local\Android\Sdk"; .\build\build.ps1
 ## 目录
 
 ```
-module/   模块源码（AndroidManifest / res / assets / src，10 个类）
+module/   模块源码（AndroidManifest / res / meta / src）
 build/    无 Gradle 构建脚本（Windows + Linux/macOS）
 docs/     架构、硬结论、已知问题、变更历史
 tools/    免装机的配置读写与日志切片脚本
