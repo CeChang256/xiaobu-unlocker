@@ -27,8 +27,10 @@
 
 1. 手机已 Root，装好 **LSPosed**（2.1.1 上验证）；
 2. 安装本模块 APK；
-3. 在 LSPosed 管理器里启用模块 —— **作用域已由模块静态声明**（`com.oplus.pantanal.ums`），
-   正常情况下不需要手动勾选；
+3. 在 LSPosed 管理器里启用模块 —— 作用域**由模块静态声明**（com.oplus.pantanal.ums），
+   管理器里不可增删：模块用 modern 格式（META-INF/xposed/module.prop 中
+   staticScope=true）声明作用域，LSPosed 会直接采用。;
+
 4. **务必**让决策进程重新加载模块：
 
    ```bash

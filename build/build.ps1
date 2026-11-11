@@ -58,13 +58,16 @@ Write-Host "== jar    $AndroidJar"
 Remove-Item $Out -Recurse -Force -ErrorAction SilentlyContinue
 New-Item -ItemType Directory -Force -Path $Cls, $Dex, $Apk | Out-Null
 
-Write-Host "== javac (Xposed API stubs + module)"
-$StubOut = Join-Path $Out "stub-classes"
+Write-Host "== javac (libxposed API stub + module)"
+# The libxposed API is shipped as Java 17 bytecode, which JDK 8 cannot read, so
+# build/stub-libxposed mirrors the same signatures and is compiled first. Those
+# stub classes stay out of the dex: at runtime LSPosed provides the real ones.
+$StubOut = Join-Path $Out "libxposed-stub"
 New-Item -ItemType Directory -Force -Path $StubOut | Out-Null
-$StubSources = Get-ChildItem (Join-Path $Root "build\stub") -Recurse -Filter *.java |
+$StubSources = Get-ChildItem (Join-Path $Root "build\stub-libxposed") -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }
 & javac -encoding UTF-8 -source 8 -target 8 -bootclasspath $AndroidJar -d $StubOut $StubSources
-if ($LASTEXITCODE -ne 0) { throw "javac (stubs) failed" }
+if ($LASTEXITCODE -ne 0) { throw "javac (libxposed stub) failed" }
 
 $Sources = Get-ChildItem (Join-Path $Module "src") -Recurse -Filter *.java |
     ForEach-Object { $_.FullName }
@@ -102,12 +105,13 @@ Write-Host "== aapt2"
 & $Aapt2 compile --dir (Join-Path $Module "res") -o (Join-Path $Out "res.zip")
 if ($LASTEXITCODE -ne 0) { throw "aapt2 compile failed" }
 & $Aapt2 link -o (Join-Path $Apk "base.apk") --manifest $Manifest `
-    -I $AndroidJar -A (Join-Path $Module "assets") -R (Join-Path $Out "res.zip") --auto-add-overlay
+    -I $AndroidJar -R (Join-Path $Out "res.zip") --auto-add-overlay
 if ($LASTEXITCODE -ne 0) { throw "aapt2 link failed" }
 
-Write-Host "== pack (jar uf)"
+Write-Host "== pack (jar uf: classes.dex + META-INF/xposed)"
 Copy-Item (Join-Path $Apk "base.apk") (Join-Path $Apk "unaligned.apk") -Force
-& jar uf (Join-Path $Apk "unaligned.apk") -C $Dex classes.dex
+& jar uf (Join-Path $Apk "unaligned.apk") -C $Dex classes.dex `
+    -C (Join-Path $Module "meta") META-INF/xposed
 if ($LASTEXITCODE -ne 0) { throw "jar failed" }
 
 Write-Host "== align"

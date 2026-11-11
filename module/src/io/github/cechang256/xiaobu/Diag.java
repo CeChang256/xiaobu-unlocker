@@ -234,7 +234,6 @@ public final class Diag {
         }
     }
 
-
     static void clearFile(Context ctx) {
         try {
             java.io.File f = new java.io.File(ctx.getFilesDir(), FILE);

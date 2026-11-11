@@ -1,13 +1,15 @@
-package de.robv.android.xposed;
+package io.github.cechang256.xiaobu.xp;
+
+import java.lang.reflect.Member;
 
 /**
- * Compile-time stub of {@code de.robv.android.xposed.XC_MethodHook}.
- * See {@link XposedBridge} for why this exists.
+ * Drop-in replacement for the legacy {@code XC_MethodHook} shape.
+ *
+ * <p>Subclasses only override {@code before}/{@code after} and the bodies are the
+ * same code the module used with the classic Xposed API; {@link XposedBridge}
+ * adapts them to the libxposed {@code Hooker}/{@code Chain} model.
  */
 public abstract class XC_MethodHook {
-
-    protected XC_MethodHook() {
-    }
 
     protected void beforeHookedMethod(MethodHookParam param) throws Throwable {
     }
@@ -16,17 +18,19 @@ public abstract class XC_MethodHook {
     }
 
     public static final class MethodHookParam {
-        public java.lang.reflect.Member method;
+        public Member method;
         public Object thisObject;
         public Object[] args;
-        private Object result;
-        private Throwable throwable;
-        private boolean returnEarly;
+
+        Object result;
+        Throwable throwable;
+        boolean returnEarly;
 
         public Object getResult() {
             return result;
         }
 
+        /** Skip the original method and return {@code result}. */
         public void setResult(Object result) {
             this.result = result;
             this.returnEarly = true;
@@ -36,6 +40,7 @@ public abstract class XC_MethodHook {
             return throwable;
         }
 
+        /** Skip the original method and throw {@code throwable}. */
         public void setThrowable(Throwable throwable) {
             this.throwable = throwable;
             this.returnEarly = true;
@@ -50,16 +55,6 @@ public abstract class XC_MethodHook {
                 throw throwable;
             }
             return result;
-        }
-    }
-
-    /** Returned by the hook* helpers; kept for API compatibility. */
-    public final class Unhook {
-        public java.lang.reflect.Member getHookedMethod() {
-            return null;
-        }
-
-        public void unhook() {
         }
     }
 }
