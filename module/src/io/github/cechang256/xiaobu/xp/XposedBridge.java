@@ -37,6 +37,11 @@ public final class XposedBridge {
             Xp.log("skip hook: " + hookMethod);
             return;
         }
+        if (java.lang.reflect.Modifier.isAbstract(((Executable) hookMethod).getModifiers())) {
+            // libxposed rejects abstract targets; the concrete override is hooked
+            // separately when the hierarchy walk reaches it.
+            return;
+        }
         XposedInterface i = Xp.iface();
         if (i == null) {
             Xp.log("skip hook (not attached): " + hookMethod);

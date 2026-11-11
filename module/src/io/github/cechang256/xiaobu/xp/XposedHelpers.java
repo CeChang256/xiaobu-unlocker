@@ -173,6 +173,9 @@ public final class XposedHelpers {
                 if (!m.getName().equals(methodName) || m.getParameterCount() != count) {
                     continue;
                 }
+                if (java.lang.reflect.Modifier.isAbstract(m.getModifiers())) {
+                    continue;
+                }
                 if (sameTypes(m.getParameterTypes(), wanted)) {
                     return m;
                 }
