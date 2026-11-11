@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- 静态作用域：LSPosed 读取这份声明当作模块的固定作用域，
+         用户在管理器里不能增删。只保留决策引擎进程——桌面侧已不再注入
+         （零闪方案下线后 launcher 里没有任何钩子）。 -->
+    <string-array name="xposedscope">
+        <item>com.oplus.pantanal.ums</item>
+    </string-array>
+</resources>

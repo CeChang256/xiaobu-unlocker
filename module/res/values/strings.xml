@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">小布建议解锁</string>
+    <string name="xposed_description">小布建议双栏自定义：借用系统「编辑默认样式」界面，把小组件左右两栏各自换成任意卡片。唯一入口 = 桌面长按卡片。</string>
+</resources>

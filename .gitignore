@@ -1,0 +1,21 @@
+# build outputs
+/out/
+*.apk
+*.idsig
+
+# keystores & signing material — never commit these
+*.jks
+*.keystore
+*.p12
+keystore.properties
+
+# local SDK / IDE
+local.properties
+.idea/
+.vscode/
+*.iml
+
+# OS noise
+.DS_Store
+Thumbs.db
+desktop.ini
