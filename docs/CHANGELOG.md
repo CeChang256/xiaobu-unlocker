@@ -2,6 +2,23 @@
 
 版本号与 `versionCode` 均取自 `AndroidManifest.xml`。
 
+## 1.28 — versionCode 22
+
+- **修复：卡片池标题不跟随编辑状态**。之前点「开始编辑」后标题一直停在
+  「请点击『开始编辑』」，从不变成「左栏 · 卡名」/「右栏 · 卡名」。
+  根因：`gridRecycler` 被赋成了普通 ViewGroup——挂载 hook 走
+  `hookAllMethods(RecyclerView, "onAttachedToWindow")` 会一路挂到
+  `View#onAttachedToWindow`，于是每个子 View 都会命中，最后把 gridRecycler
+  覆盖成 LinearLayout；随后 `findViewHolderForAdapterPosition` 抛
+  `NoSuchMethodError` 被吞掉，标题永远不刷新。
+  修法：只接受真正的 RecyclerView；并记下绑定层写入标题的那个 TextView，
+  激活时直接改它，不再依赖 ViewHolder 查找。
+- **修复：预览绑定 hook 每帧报错**（`editor bind hook fail ... c$a#f`）。
+  卡片池适配器 `c` 继承自预览适配器 `h`、复用同一个 `onBindViewHolder`，
+  池子的 holder（`c$a`，字段只有 a/b/c/d）没有 `f`/`g`。现在先按字段存在性分流。
+- 顺带消掉了 `grid recycler attached: android.widget.LinearLayout` 这类刷屏日志
+  （一次打开编辑器 410 行）。
+
 ## 1.27 — versionCode 21
 
 - 只改**模块描述**与文档，无功能变更：描述里现在写了「启用后长按『智慧建议服务』→ 强行停止」，

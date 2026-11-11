@@ -349,7 +349,15 @@ final class EditorHook {
                             return;
                         }
                         Object holder = param.args[0];
-                        // holder 字段（反编译 a 类）：f/g=预览卡容器（左右顺序
+                        // 卡片池适配器 c 继承自预览适配器 h，复用同一个
+                        // onBindViewHolder；池子的 holder（c$a）没有 f/g 字段。
+                        // 不先判一下就取字段会抛 NoSuchFieldError 刷日志
+                        //（实测「editor bind hook fail ... c$a#f」）。
+                        if (!hasField(holder.getClass(), "f")
+                                || !hasField(holder.getClass(), "g")) {
+                            return;
+                        }
+                        // holder 字段（反编译 h$a）：f/g=预览卡容器（左右顺序
                         // 不确定！）、c=tab 标题、d=compose[0]（左栏）ImageView。
                         // 用 d 的祖先链反查哪个容器是左，不硬编码假设。
                         final View f = (View) XposedHelpers.getObjectField(holder, "f");
@@ -612,6 +620,16 @@ final class EditorHook {
                                             return;
                                         }
                                         ViewGroup rv = (ViewGroup) param.thisObject;
+                                        // hookAllMethods 会沿继承链一路挂到
+                                        // View#onAttachedToWindow，于是任何子 View
+                                        // 都会进来（日志里那些 FrameLayout/
+                                        // LinearLayout 就是这么来的）。gridRecycler
+                                        // 必须是真正的 RecyclerView，否则后面
+                                        // findViewHolderForAdapterPosition 会抛异常
+                                        // 被吞掉，标题永远不刷新。
+                                        if (!isRecyclerView(rv)) {
+                                            return;
+                                        }
                                         if (rv != editorRoot
                                                 && !isDescendantOf(rv, editorRoot)) {
                                             return; // 不是编辑器窗口里的
@@ -696,7 +714,11 @@ final class EditorHook {
                                 Object tv = XposedHelpers.getObjectField(
                                         param.args[0], "a");
                                 if (tv instanceof TextView) {
-                                    ((TextView) tv).setText(pickerTitleText());
+                                    // 记下来：激活后 applyPickerTitle 直接改这个
+                                    // TextView，不必依赖 findViewHolderForAdapterPosition
+                                    // （那条路在 COUIRecyclerView 上并不可靠）。
+                                    pickerTitleView = (TextView) tv;
+                                    pickerTitleView.setText(pickerTitleText());
                                 }
                             } catch (Throwable ignored) {
                             }
@@ -1120,6 +1142,9 @@ final class EditorHook {
      */
     private static volatile boolean userPicking;
 
+    /** 卡片池第 0 行的标题 TextView（绑定层写入时记下，激活后直接改它）。 */
+    private static volatile TextView pickerTitleView;
+
     /** 卡片池标题文案：未编辑时给提示，编辑中显示「左栏 · 天气时钟」。 */
     private static String pickerTitleText() {
         if (!editActive) {
@@ -1137,11 +1162,17 @@ final class EditorHook {
      * 由 4.55 的 onBindViewHolder hook 写入同一文案。
      */
     private static void applyPickerTitle() {
+        final String text = pickerTitleText();
+        // 首选：绑定层记下的那个 TextView（一定就是第 0 行的标题）。
+        final TextView captured = pickerTitleView;
+        if (captured != null && captured.isAttachedToWindow()) {
+            captured.setText(text);
+            return;
+        }
         final ViewGroup rv = gridRecycler;
         if (rv == null) {
             return;
         }
-        final String text = pickerTitleText();
         rv.post(new Runnable() {
             @Override
             public void run() {
@@ -1514,6 +1545,31 @@ final class EditorHook {
     }
 
     private static final Object BADGE_TAG = new Object();
+
+    /**
+     * Is this really a RecyclerView? Compiled without androidx on the classpath,
+     * so the check walks the class names instead of using {@code instanceof}.
+     */
+    private static boolean isRecyclerView(View v) {
+        for (Class<?> c = v.getClass(); c != null; c = c.getSuperclass()) {
+            if ("androidx.recyclerview.widget.RecyclerView".equals(c.getName())) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 反射判断字段是否存在（沿父类链），用于按 holder 类型分流。 */
+    private static boolean hasField(Class<?> clazz, String name) {
+        for (Class<?> c = clazz; c != null && c != Object.class; c = c.getSuperclass()) {
+            try {
+                c.getDeclaredField(name);
+                return true;
+            } catch (NoSuchFieldException ignored) {
+            }
+        }
+        return false;
+    }
 
     /**
      * 判定 f/g 哪个是左栏容器：系统的 a3.d 是 compose[0]（左栏）的
