@@ -27,25 +27,14 @@
 
 1. 手机已 Root，装好 **LSPosed**（2.1.1 上验证）；
 2. 安装本模块 APK；
-3. 在 LSPosed 管理器里启用模块 —— 作用域**由模块静态声明**（com.oplus.pantanal.ums），
-   管理器里不可增删：模块用 modern 格式（META-INF/xposed/module.prop 中
-   staticScope=true）声明作用域，LSPosed 会直接采用。;
+3. 在 LSPosed 管理器里启用模块。作用域由模块指定（`com.oplus.pantanal.ums`），管理器里不可增删。
+4. 在 LSPosed 的作用域列表里长按「**智慧建议服务**」→ **强行停止**，让决策进程重新加载模块
+   （不用命令，也不用重启手机）。
 
-4. **让决策进程重新加载模块**（这一步不能省，否则跑的还是旧代码）：
+   > 也可以用命令：`adb shell su -c 'am force-stop com.oplus.pantanal.ums'`。
+   > 如果停在桌面发现卡片没变，切一页桌面再回来。
 
-   - **推荐做法（不用命令、不用重启）**：在 LSPosed 管理器里，长按作用域里的
-     「**智慧建议服务**」→ **强行停止**；
-   - 或者用命令：
-
-     ```bash
-     adb shell su -c 'am force-stop com.oplus.pantanal.ums'
-     ```
-
-   > LSPosed 在**进程启动时**注入，所以只要这个进程被重建就会用新代码——
-   > `com.oplus.pantanal.ums` 是普通应用，强行停止对它有效，不需要重启手机。
-   > 如果停在桌面上发现卡片没变，切一页桌面再回来（桌面会重新绑定卡片）。
-
-5. 回到桌面，长按卡片 → **编辑默认样式**，即可看到多出来的「系统工具+xxx」自定义页签。
+5. 回到桌面，长按卡片 → **编辑默认样式**，即可看到多出来的自定义页签。
 
 ## 使用
 
@@ -57,8 +46,7 @@
 ```
 
 - 只改一栏：另一栏不受影响；
-- **两栏对调**：保存后桌面会先闪一下系统卡（约 1 秒）再互换 —— 这是触发 launcher 重排
-  的唯一可行手段，不是 bug（见 [docs/HARD-LESSONS.md](docs/HARD-LESSONS.md) §1）；
+- **两栏对调**：分别给两栏选中对方的卡并保存，桌面会短暂显示系统卡随后换栏；
 - 保存失败/想反悔：点「取消」即还原，prefs 不会被污染。
 
 ## 配置
@@ -101,11 +89,11 @@ $env:ANDROID_HOME="C:\Users\me\AppData\Local\Android\Sdk"; .\build\build.ps1
 ## 已知限制
 
 - **只在这一套 ROM 上验证过**：所有钩子都绑定了当前 ROM 的类名/方法名/混淆名，OTA 后大概率要重新对位；
-- **对调会闪一下**：机制决定的最小代价，零闪方案已尝试并放弃（原因见 hard-lessons）；
+- **对调时会短暂显示系统卡**；
 - **两栏不能是同一张卡**：同 `serviceId` 会被宿主丢弃整个组合；
 - **大卡片不是 appwidget**：渲染在 `com.coloros.assistantscreen` 进程，所以位置控制只能在数据层做。
 
-排查手册（五个会让你白查一天的坑）见 [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)。
+排查手册见 [docs/KNOWN-ISSUES.md](docs/KNOWN-ISSUES.md)。
 
 ## 目录
 
