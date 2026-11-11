@@ -36,6 +36,30 @@ OTA 后大概率需要重新对位。工厂类找不到时会降级为“现场�
 adb shell su -c 'am force-stop com.oplus.pantanal.ums'
 ```
 
+LSPosed 在**进程启动时**注入，所以让新配置生效的唯一要求就是“让被注入的进程重新创建”。
+真机实测两种都行（`am force-stop` 或 `kill -9 <pid>`），**不需要重启手机**：
+
+```bash
+su -c 'am force-stop com.oplus.pantanal.ums'   # 连 :cardconfig / :uiSetting 一起杀掉
+input keyevent KEYCODE_HOME                      # 桌面重新绑定 → 拉起新进程
+```
+
+判断是否真换了进程：看 `diag.log` 里的 pid 是否变化，或
+
+```bash
+su -c 'pidof com.oplus.pantanal.ums'
+```
+
+“看起来没生效”时按这三条排：
+
+| 现象 | 原因 / 处理 |
+|---|---|
+| 桌面卡片没变，但日志有新的 `dswap rewrote` | launcher 缓存了绑定 → 切一页桌面再回来；或 `kill -9` 掉 launcher 进程（**不要** `force-stop`，会丢 HOME 角色） |
+| 编辑器里行为没变 | 编辑器跑在 `:uiSetting` / `:cardconfig` 子进程，只 `kill -9` 主进程不会重建它们 → 用 `am force-stop <包名>` |
+| 连 `module loaded` 日志都没有 | 模块没真正启用或作用域不对 → 先看 LSPosed 管理器和 `modules_*.log` |
+
+一键脚本：[`tools/refresh.sh`](../tools/refresh.sh)。
+
 **② 改 prefs 必须同时停模块 App**
 
 provider 进程的内存缓存会把文件刷回旧值：
