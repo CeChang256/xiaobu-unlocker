@@ -15,7 +15,7 @@ import android.content.pm.PackageManager;
 public final class BuildInfo {
 
     /** 读不到 PackageManager 时的兜底，构建时更新。 */
-    static final String FALLBACK = "1.29";
+    static final String FALLBACK = "1.30";
 
     private static final String SELF = "io.github.cechang256.xiaobu";
 

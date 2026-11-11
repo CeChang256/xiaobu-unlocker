@@ -2,6 +2,19 @@
 
 版本号与 `versionCode` 均取自 `AndroidManifest.xml`。
 
+## 1.30 — versionCode 24
+
+- **撤掉 1.29 的"翻转后补发通知"**（`retryRefreshIfIdle`）。实测它不可靠：
+  日志里能看到 `refresh retry scheduled` 和 `refresh thread started`，但 300ms
+  后的 `tick` 永远不出现 —— 编辑器一关，决策进程很快被 ColorOS 冻结
+  （cgroup freezer），进程内的任何定时器都不会按时跑。既然通知已经发出、
+  进程又被冻住，补发解决不了根本问题，留着只会误导。
+  对调能不能立刻看到，取决于**对调时桌面是否停在小组件那一页**：小组件
+  不在屏幕上时 launcher 不会去拉数据（系统行为），切回去时自然会重绑。
+- 保留 1.29 的另两项：
+  - 选卡后立刻刷新卡片池标题（「左栏 · 卡名」/「右栏 · 卡名」）；
+  - `roundms` 默认 1200 → 800。
+
 ## 1.29 — versionCode 23
 
 针对"对调失败"的三处修复：
