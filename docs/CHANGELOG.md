@@ -2,6 +2,13 @@
 
 版本号与 `versionCode` 均取自 `AndroidManifest.xml`。
 
+## 1.27 — versionCode 21
+
+- 只改**模块描述**与文档，无功能变更：描述里现在写了「启用后长按『智慧建议服务』→ 强行停止」，
+  这行字出现在 LSPosed 管理器的模块卡片里，是首次安装者唯一必然看到的位置。
+- README 的安装步骤同样改成「不用命令、不用重启」的路径。
+- 不新增图标、不申请 root、不改任何 hook 逻辑。
+
 ## 1.26 — versionCode 20
 
 - **迁移到 modern 模块格式**（libxposed API 102）：入口改为 META-INF/xposed/java_init.list

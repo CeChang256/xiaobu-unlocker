@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">小布建议解锁</string>
-    <string name="xposed_description">小布建议双栏自定义：借用系统「编辑默认样式」界面，把小组件左右两栏各自换成任意卡片。唯一入口 = 桌面长按卡片。</string>
+    <!-- 这行字会显示在 LSPosed 管理器的模块卡片里，是首次安装者唯一必然看到的地方，
+         所以带上"启用后怎么让它生效"。 -->
+    <string name="xposed_description">双栏自定义：借用系统「编辑默认样式」把小组件左右两栏换成任意卡片。启用后在 LSPosed 里长按「智慧建议服务」→ 强行停止，再回桌面即可生效，不用重启手机。</string>
 </resources>

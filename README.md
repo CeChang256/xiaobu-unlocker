@@ -31,13 +31,19 @@
    管理器里不可增删：模块用 modern 格式（META-INF/xposed/module.prop 中
    staticScope=true）声明作用域，LSPosed 会直接采用。;
 
-4. **务必**让决策进程重新加载模块：
+4. **让决策进程重新加载模块**（这一步不能省，否则跑的还是旧代码）：
 
-   ```bash
-   adb shell su -c 'am force-stop com.oplus.pantanal.ums'
-   ```
+   - **推荐做法（不用命令、不用重启）**：在 LSPosed 管理器里，长按作用域里的
+     「**智慧建议服务**」→ **强行停止**；
+   - 或者用命令：
 
-   > 装完不重启该进程，跑的还是旧 dex。这是最常见的“改了没生效”。
+     ```bash
+     adb shell su -c 'am force-stop com.oplus.pantanal.ums'
+     ```
+
+   > LSPosed 在**进程启动时**注入，所以只要这个进程被重建就会用新代码——
+   > `com.oplus.pantanal.ums` 是普通应用，强行停止对它有效，不需要重启手机。
+   > 如果停在桌面上发现卡片没变，切一页桌面再回来（桌面会重新绑定卡片）。
 
 5. 回到桌面，长按卡片 → **编辑默认样式**，即可看到多出来的「系统工具+xxx」自定义页签。
 
