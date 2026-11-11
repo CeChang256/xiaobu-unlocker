@@ -26,7 +26,10 @@ two columns.
 ## Install
 
 1. Root + LSPosed (2.1.1 tested);
-2. install the APK and enable the module — the scope is **statically declared**, so no manual picking;
+2. install the APK and enable the module — the scope is **statically declared**
+   (staticScope=true in META-INF/xposed/module.prop + scope.list), so the
+   manager cannot widen it;
+
 3. reload the hooked process, otherwise the old dex keeps running:
 
    ```bash

@@ -9,9 +9,9 @@ import org.json.JSONObject;
 import java.lang.reflect.Field;
 import java.util.List;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import io.github.cechang256.xiaobu.xp.XC_MethodHook;
+import io.github.cechang256.xiaobu.xp.XposedBridge;
+import io.github.cechang256.xiaobu.xp.XposedHelpers;
 
 /**
  * Decision-layer rewrite of the 应用建议 (guaranteed) service, v2.
@@ -138,7 +138,6 @@ final class SceneServiceRewriter {
             }
         }
     }
-
 
     private SceneServiceRewriter() {
     }

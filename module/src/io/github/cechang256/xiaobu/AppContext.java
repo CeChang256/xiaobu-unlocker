@@ -2,9 +2,9 @@ package io.github.cechang256.xiaobu;
 
 import android.content.Context;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import io.github.cechang256.xiaobu.xp.XC_MethodHook;
+import io.github.cechang256.xiaobu.xp.XposedBridge;
+import io.github.cechang256.xiaobu.xp.XposedHelpers;
 
 /**
  * Resolves a usable Context from inside the hooked process.

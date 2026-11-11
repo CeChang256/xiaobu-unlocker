@@ -5,9 +5,9 @@ import android.text.TextUtils;
 
 import java.util.List;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import io.github.cechang256.xiaobu.xp.XC_MethodHook;
+import io.github.cechang256.xiaobu.xp.XposedBridge;
+import io.github.cechang256.xiaobu.xp.XposedHelpers;
 
 /**
  * Makes either column of the 小布建议 group card user-selectable.
@@ -151,7 +151,7 @@ final class DefaultServiceHook {
             }
         });
         Diag.log("model", "hooked getDefaultServiceList");
-        de.robv.android.xposed.XposedBridge.log(ModuleInit.TAG + ": model hooked");
+        io.github.cechang256.xiaobu.xp.XposedBridge.log(ModuleInit.TAG + ": model hooked");
     }
 
     @SuppressWarnings("unchecked")
@@ -240,7 +240,7 @@ final class DefaultServiceHook {
             }
         }
         Diag.log("model", ids.toString());
-        de.robv.android.xposed.XposedBridge.log(ModuleInit.TAG + ": " + ids);
+        io.github.cechang256.xiaobu.xp.XposedBridge.log(ModuleInit.TAG + ": " + ids);
         Object right = null;
         if (optional != null) {
             for (String wanted : CUSTOM_RIGHT_CANDIDATES) {
@@ -359,7 +359,7 @@ final class DefaultServiceHook {
                 + " left=" + mGetServiceId.invoke(left) + " right=" + mGetServiceId.invoke(right)
                 + " tabs=" + tabs.size();
         Diag.log("model", msg);
-        de.robv.android.xposed.XposedBridge.log(ModuleInit.TAG + ": " + msg);
+        io.github.cechang256.xiaobu.xp.XposedBridge.log(ModuleInit.TAG + ": " + msg);
     }
 
     /** 自定义 tab 在 defaultServiceList 里的下标（viewPager position 相同）；-1 = 未追加。 */

@@ -1,39 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
     package="io.github.cechang256.xiaobu"
-    android:versionCode="19"
-    android:versionName="1.25">
+    android:versionCode="20"
+    android:versionName="1.26">
 
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="34" />
 
+    <!-- Modern (libxposed) module: the framework recognises it by
+         META-INF/xposed/java_init.list, and reads module.prop / scope.list from
+         the same directory. No legacy xposed* meta-data here on purpose: with
+         staticScope=true the scope cannot be widened in the manager. -->
     <application
         android:label="@string/app_name"
+        android:description="@string/xposed_description"
         android:allowBackup="false"
         android:hasCode="true">
 
-        <!-- 无任何入口：纯 Xposed 模块（LSPosed 靠 meta-data 识别）。
-             双栏自定义唯一入口 = 桌面长按卡片 → 编辑默认样式。 -->
-        <!-- Exposes the config to every hooked process and accepts their
-             diagnostics. Writes are limited to the module's own log file;
-             content CRUD methods stay unimplemented. -->
+        <!-- No launcher entry: the only entry point is the system editor
+             (long-press the widget → 编辑默认样式). -->
         <provider
             android:name=".LayoutProvider"
             android:authorities="io.github.cechang256.xiaobu.layout"
             android:exported="true" />
-
-        <meta-data
-            android:name="xposedmodule"
-            android:value="true" />
-        <meta-data
-            android:name="xposeddescription"
-            android:value="@string/xposed_description" />
-        <meta-data
-            android:name="xposedminversion"
-            android:value="82" />
-        <!-- 静态作用域：LSPosed 以此为准，管理器里不可编辑。
-             只有决策引擎进程需要注入；桌面侧已无任何钩子。 -->
-        <meta-data
-            android:name="xposedscope"
-            android:resource="@array/xposedscope" />
     </application>
 </manifest>

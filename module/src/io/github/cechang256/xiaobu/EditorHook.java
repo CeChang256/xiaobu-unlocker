@@ -14,9 +14,9 @@ import android.widget.TextView;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 
-import de.robv.android.xposed.XC_MethodHook;
-import de.robv.android.xposed.XposedBridge;
-import de.robv.android.xposed.XposedHelpers;
+import io.github.cechang256.xiaobu.xp.XC_MethodHook;
+import io.github.cechang256.xiaobu.xp.XposedBridge;
+import io.github.cechang256.xiaobu.xp.XposedHelpers;
 
 /**
  * 借用系统"编辑默认样式"界面实现双栏自定义（用户方案 v3）。

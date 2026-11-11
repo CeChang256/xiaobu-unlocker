@@ -58,15 +58,18 @@ echo "== jar    $ANDROID_JAR"
 rm -rf "$OUT"
 mkdir -p "$CLS" "$DEX" "$APK"
 
-echo "== javac (Xposed API stubs + module)"
-mkdir -p "$OUT/stub-classes"
-find "$ROOT/build/stub" -name '*.java' > "$OUT/stub-sources.txt"
+echo "== javac (libxposed API stub + module)"
+# The real API jar is Java 17 bytecode (JDK 8 javac cannot read it), so the
+# signatures are mirrored in build/stub-libxposed. Those classes are compiled
+# separately and never enter the dex.
+mkdir -p "$OUT/libxposed-stub"
+find "$ROOT/build/stub-libxposed" -name '*.java' > "$OUT/stub-sources.txt"
 "$JAVAC" -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
-  -d "$OUT/stub-classes" @"$OUT/stub-sources.txt"
+  -d "$OUT/libxposed-stub" @"$OUT/stub-sources.txt"
 
 find "$MODULE/src" -name '*.java' > "$OUT/sources.txt"
 "$JAVAC" -encoding UTF-8 -source 8 -target 8 -bootclasspath "$ANDROID_JAR" \
-  -classpath "$OUT/stub-classes" -d "$CLS" @"$OUT/sources.txt"
+  -classpath "$OUT/libxposed-stub" -d "$CLS" @"$OUT/sources.txt"
 
 echo "== dex"
 JAVA_VER="$("$JAVA" -version 2>&1 | head -1 || true)"
@@ -98,11 +101,11 @@ fi
 echo "== aapt2"
 "$AAPT2" compile --dir "$MODULE/res" -o "$OUT/res.zip"
 "$AAPT2" link -o "$APK/base.apk" --manifest "$MODULE/AndroidManifest.xml" \
-  -I "$ANDROID_JAR" -A "$MODULE/assets" -R "$OUT/res.zip" --auto-add-overlay
+  -I "$ANDROID_JAR" -R "$OUT/res.zip" --auto-add-overlay
 
 echo "== pack (jar uf)"
 cp "$APK/base.apk" "$APK/unaligned.apk"
-"$JAR" uf "$APK/unaligned.apk" -C "$DEX" classes.dex
+"$JAR" uf "$APK/unaligned.apk" -C "$DEX" classes.dex -C "$MODULE/meta" META-INF/xposed
 
 echo "== align"
 "$ZIPALIGN" -f 4 "$APK/unaligned.apk" "$APK/aligned.apk"

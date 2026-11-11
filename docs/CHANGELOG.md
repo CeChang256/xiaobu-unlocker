@@ -2,6 +2,18 @@
 
 版本号与 `versionCode` 均取自 `AndroidManifest.xml`。
 
+## 1.26 — versionCode 20
+
+- **迁移到 modern 模块格式**（libxposed API 102）：入口改为 META-INF/xposed/java_init.list
+  + io.github.libxposed.api.XposedModule，作用域改为 META-INF/xposed/scope.list，
+  并在 module.prop 里声明 staticScope=true。
+- 结果：**作用域变成真正的静态作用域**，LSPosed 管理器里不可增删。
+  （legacy 模块格式下 xposedscope 只是推荐，LSPosed 源码里 legacy 分支硬编码
+  staticScope = false。）
+- 兼容层：经典 API 的调用（XposedHelpers / XC_MethodHook / XposedBridge）在
+  io.github.cechang256.xiaobu.xp 里以 libxposed 为底座重新实现，业务代码未改。
+- 行为与 1.25 一致：双栏自定义、对调、编辑器选中框/标题、进程被杀自愈。
+
 ## 1.25 — versionCode 19
 
 - **更换 application id**：com.xiaobu.unlocker → io.github.cechang256.xiaobu。
