@@ -282,6 +282,9 @@ final class EditorHook {
                                     cacheRightBean(picked, pickedSid);
                                 }
                                 param.setResult(null);
+                                // 选完卡让池子标题跟着变（「右栏 · 卡名」），
+                                // 否则要等下一次点「开始编辑」才更新。
+                                updateGridTitle();
                             }
                             return;
                         }
@@ -310,6 +313,8 @@ final class EditorHook {
                                             + pickedSid);
                                 }
                                 param.setResult(null);
+                                // 同右栏：选完立刻刷新池子标题。
+                                updateGridTitle();
                             }
                             // ok=false（compose 缺失等）→ 放行原方法兜底
                         }
@@ -946,11 +951,20 @@ final class EditorHook {
                                             new Runnable() {
                                                 @Override
                                                 public void run() {
+                                                    final int base = SceneServiceRewriter
+                                                            .sceneServed();
                                                     nativeKick();
                                                     notifyDecisionRefresh();
                                                     ModuleInit.log("editor save:"
                                                             + " roundtrip -> custom"
                                                             + " notified");
+                                                    // launcher 不一定马上重拉：
+                                                    // 实测有翻转后 8 秒一次查询
+                                                    // 都没有、桌面停在系统卡的
+                                                    // 情况（14:00 那次对调就是这么
+                                                    // "失败"的）。补几脚，看到
+                                                    // 查询就停。
+                                                    retryRefreshIfIdle(base, 0);
                                                 }
                                             };
                                     // round 52：mode=native **且** 写入往返时间戳，
@@ -2105,6 +2119,42 @@ final class EditorHook {
      * 不会传给注册在子路径上的观察者），这里把所有可能的决策 URI 全量
      * 通知一遍，保证 launcher / assistantscreen 重新拉取。
      */
+    /** 翻转回 custom 后补发通知的间隔（毫秒）。 */
+    private static final long[] FLIP_RETRY_MS = {300L, 900L, 1800L};
+
+    /**
+     * 对调往返翻转回 custom 之后，launcher 不一定马上重拉数据。
+     *
+     * <p>14:00 那次对调实测：翻转后 8 秒内一条场景查询都没有，桌面停在
+     * 系统卡上，用户以为对调失败，随后又保存了一次把结果覆盖回去。
+     * 这里按 300/900/1800ms 补几脚通知，一旦看到新的场景查询（单调计数
+     * 增加）就停。
+     *
+     * @param base    翻转那一刻的场景查询计数
+     * @param attempt 第几次重试（0 起）
+     */
+    private static void retryRefreshIfIdle(final int base, final int attempt) {
+        if (attempt >= FLIP_RETRY_MS.length) {
+            return;
+        }
+        new android.os.Handler(android.os.Looper.getMainLooper())
+                .postDelayed(new Runnable() {
+                    @Override
+                    public void run() {
+                        if (SceneServiceRewriter.sceneServed() > base) {
+                            ModuleInit.log("editor save: roundtrip refresh acked"
+                                    + " after " + attempt + " retry(s)");
+                            return;
+                        }
+                        nativeKick();
+                        notifyDecisionRefresh();
+                        ModuleInit.log("editor save: roundtrip refresh retry "
+                                + (attempt + 1));
+                        retryRefreshIfIdle(base, attempt + 1);
+                    }
+                }, FLIP_RETRY_MS[attempt]);
+    }
+
     private static void notifyDecisionRefresh() {
         try {
             Context ctx = AppContext.get();

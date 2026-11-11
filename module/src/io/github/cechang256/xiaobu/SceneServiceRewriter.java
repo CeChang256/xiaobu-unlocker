@@ -76,7 +76,14 @@ final class SceneServiceRewriter {
     private static final long GIVE_UP_MS = 8000L;
     private static volatile long sRoundAt;
     private static volatile int sRoundServed;
+    /** 场景查询总次数（单调递增）。用来判断翻转后 launcher 是否真的重拉。 */
+    private static volatile int sSceneServed;
     static volatile Runnable sRoundNotify;
+
+    /** 场景查询总次数；调用方记录翻转时的值，之后对比即可。 */
+    static int sceneServed() {
+        return sSceneServed;
+    }
 
     static void beginRoundTrip() {
         sRoundTrip = true;
@@ -102,7 +109,7 @@ final class SceneServiceRewriter {
             return;
         }
         long held = System.currentTimeMillis() - sRoundAt;
-        int holdMs = LayoutStore.featureInt(ctx, "roundms", 1200);
+        int holdMs = LayoutStore.featureInt(ctx, "roundms", 800);
         if (holdMs < 150) {
             holdMs = 150;
         }
@@ -290,6 +297,9 @@ final class SceneServiceRewriter {
         if (!(listObj instanceof List)) {
             return;
         }
+        // 每次场景查询都计数：对调往返"翻转回 custom"之后要判断 launcher
+        // 有没有真的重拉一次，没拉就重发通知（sSceneServed 是单调的）。
+        sSceneServed++;
         Context ctx = AppContext.get();
         if (ctx == null) {
             return;
