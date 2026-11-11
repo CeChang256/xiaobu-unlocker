@@ -1,8 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-    package="com.xiaobu.unlocker"
-    android:versionCode="18"
-    android:versionName="1.24">
+    package="io.github.cechang256.xiaobu"
+    android:versionCode="19"
+    android:versionName="1.25">
 
     <uses-sdk android:minSdkVersion="29" android:targetSdkVersion="34" />
 
@@ -18,7 +18,7 @@
              content CRUD methods stay unimplemented. -->
         <provider
             android:name=".LayoutProvider"
-            android:authorities="com.xiaobu.unlocker.layout"
+            android:authorities="io.github.cechang256.xiaobu.layout"
             android:exported="true" />
 
         <meta-data

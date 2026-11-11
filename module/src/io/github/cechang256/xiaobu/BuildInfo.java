@@ -1,4 +1,4 @@
-package com.xiaobu.unlocker;
+package io.github.cechang256.xiaobu;
 
 import android.content.Context;
 import android.content.pm.PackageManager;
@@ -15,9 +15,9 @@ import android.content.pm.PackageManager;
 public final class BuildInfo {
 
     /** 读不到 PackageManager 时的兜底，构建时更新。 */
-    static final String FALLBACK = "1.24";
+    static final String FALLBACK = "1.25";
 
-    private static final String SELF = "com.xiaobu.unlocker";
+    private static final String SELF = "io.github.cechang256.xiaobu";
 
     private static volatile String sCached;
 

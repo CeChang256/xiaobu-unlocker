@@ -1,4 +1,4 @@
-package com.xiaobu.unlocker;
+package io.github.cechang256.xiaobu;
 
 import android.content.ContentResolver;
 import android.content.Context;

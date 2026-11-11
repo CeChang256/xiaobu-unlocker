@@ -2,6 +2,15 @@
 
 版本号与 `versionCode` 均取自 `AndroidManifest.xml`。
 
+## 1.25 — versionCode 19
+
+- **更换 application id**：com.xiaobu.unlocker → io.github.cechang256.xiaobu。
+  原因是 LSPosed 官方仓库要求包名前缀可验证（io.github.<GitHub 用户名>），
+  而原用户名以数字开头无法作为包名。功能无任何变化。
+- Provider authority 随之改为 io.github.cechang256.xiaobu.layout。
+- 注意：这是**新的应用**，与旧版 com.xiaobu.unlocker 不能互相覆盖，升级前需先卸载旧版
+  （模块配置会重置，重新选一次卡即可）。
+
 ## 1.24 — versionCode 18
 
 - 常驻日志降噪：稳态 logcat 从 ≈1.8 条/秒降到 **0**；删掉一条每次都跨进程 IPC 的诊断代码

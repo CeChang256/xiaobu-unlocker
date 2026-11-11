@@ -1,4 +1,4 @@
-package com.xiaobu.unlocker;
+package io.github.cechang256.xiaobu;
 
 import java.util.HashMap;
 import java.util.Map;

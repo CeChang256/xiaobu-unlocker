@@ -1,4 +1,4 @@
-package com.xiaobu.unlocker;
+package io.github.cechang256.xiaobu;
 
 import android.content.ContentProvider;
 import android.content.ContentValues;
@@ -28,7 +28,7 @@ import org.json.JSONObject;
  */
 public final class LayoutProvider extends ContentProvider {
 
-    public static final String AUTHORITY = "com.xiaobu.unlocker.layout";
+    public static final String AUTHORITY = "io.github.cechang256.xiaobu.layout";
     public static final String METHOD_GET = "getLayout";
     public static final String METHOD_SET_COLUMN = "setColumn";
     /** 一次写入左右两栏（+ 可选 mode），避免两次读改写互相盖掉。 */

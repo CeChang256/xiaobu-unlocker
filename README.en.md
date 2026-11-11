@@ -8,8 +8,8 @@ pick cards exactly the way the system intends — the module just makes the *sec
 column (normally a fixed “App suggestions” card) editable, and lets you swap the
 two columns.
 
-- Package: `com.xiaobu.unlocker`
-- Version: **1.24 (18)**
+- Package: `io.github.cechang256.xiaobu`
+- Version: **1.25 (19)**
 - Hooked process: `com.oplus.pantanal.ums` only (the decision engine) — the launcher is **not** injected
 - Verified on: OnePlus PLG110 · Android 17 · ColorOS `PLG110_17.0.0.105(CN01)` · LSPosed 2.1.1
 

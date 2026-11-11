@@ -41,7 +41,7 @@ adb shell su -c 'am force-stop com.oplus.pantanal.ums'
 provider 进程的内存缓存会把文件刷回旧值：
 
 ```bash
-adb shell su -c 'am force-stop com.xiaobu.unlocker; am force-stop com.oplus.pantanal.ums'
+adb shell su -c 'am force-stop io.github.cechang256.xiaobu; am force-stop com.oplus.pantanal.ums'
 # 再 push 新文件并 chown/chmod
 ```
 
@@ -70,7 +70,7 @@ editor save: swap check new=(L,R) served=(L,R) -> PURE SWAP / not a swap
 
 | 想看的 | 去哪 |
 |---|---|
-| 改写结果、对调状态机 | `Diag` 文件：`/data/data/com.xiaobu.unlocker/files/diag.log`（512KB 轮转） |
+| 改写结果、对调状态机 | `Diag` 文件：`/data/data/io.github.cechang256.xiaobu/files/diag.log`（512KB 轮转） |
 | 编辑器交互（选卡/标题/选中框） | logcat，`grep XiaoBuUnlocker` |
 | 启动期 | 先 `adb logcat -G 16M` 再复现 |
 
@@ -78,4 +78,4 @@ editor save: swap check new=(L,R) served=(L,R) -> PURE SWAP / not a swap
 
 1. 先在编辑器里切到系统页签保存（`mode=native`），桌面即回系统样式；
 2. LSPosed 里停用模块 → 再卸载 APK；
-3. 配置残留在 `/data/data/com.xiaobu.unlocker/`，随卸载删除。
+3. 配置残留在 `/data/data/io.github.cechang256.xiaobu/`，随卸载删除。
