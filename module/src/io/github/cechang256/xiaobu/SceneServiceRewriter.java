@@ -315,9 +315,22 @@ final class SceneServiceRewriter {
         if (ctx == null) {
             return;
         }
-        if (!LayoutStore.enabled(ctx)
-                || !LayoutStore.feature(ctx, "dswap", false)) {
-            return;
+        boolean on = LayoutStore.enabled(ctx)
+                && LayoutStore.feature(ctx, "dswap", false);
+        String mode = LayoutStore.mode(ctx);
+        JSONObject cfgR = on ? rightColumnConfig(ctx) : null;
+        JSONObject cfgL = on ? leftColumnConfig(ctx) : null;
+        // 开关 / mode / 左右组合任何一项变化（包括进程第一次看到）都开一个
+        // 5 秒窗口：窗口内的桌面刷新会额外写进 LSPosed 日志，用户导出后
+        // 就能定位"改完没生效"到底卡在哪一步。
+        String pairKey = (on ? "on" : "off") + "|" + mode + "|"
+                + sidOf(cfgL) + "|" + sidOf(cfgR);
+        if (!pairKey.equals(sLastPairKey)) {
+            sLastPairKey = pairKey;
+            Diag.openWindow(5000);
+            Diag.window("dswap", "config -> mode=" + mode + " dswap=" + (on ? "on" : "off")
+                    + " L=" + nameOf(cfgL) + "(" + sidOf(cfgL) + ")"
+                    + " R=" + nameOf(cfgR) + "(" + sidOf(cfgR) + ")");
         }
         // 三个编辑器 tab 互不干扰：mode=custom 时改写成自定义档案；
         // mode=native 时**反向工作**——把可能残留的自定义改写恢复成系统
@@ -325,8 +338,12 @@ final class SceneServiceRewriter {
         // 上游管线缓存/在途列表可能还带着自定义卡，罢工后没人改回去，
         // 表现为"桌面切不回系统样式"、右栏身份与数据错配渲染成
         // "小布建议说明"（实测）。
-        String mode = LayoutStore.mode(ctx);
+        if (!on) {
+            Diag.window("dswap", "skip: dswap off");
+            return;
+        }
         if (!LayoutStore.isCustomMode(mode)) {
+            Diag.window("dswap", "skip: mode=" + mode);
             revertSceneList(ctx, (List<?>) listObj);
             // 模式往返的第一段（native）：系统内容已经上台，自定义两张卡
             // 已离场。等 launcher 真正拉过一次、且已过 roundms，就切回
@@ -337,25 +354,15 @@ final class SceneServiceRewriter {
             }
             return;
         }
-        JSONObject cfgR = rightColumnConfig(ctx);
-        JSONObject cfgL = leftColumnConfig(ctx);
         if (cfgR == null && cfgL == null) {
+            Diag.window("dswap", "skip: no config");
             return;
         }
         // 左右同卡会让插件丢弃整个组合（E7 实证），此时整体不动最安全。
         if (cfgR != null && cfgL != null
                 && cfgR.optString("serviceId", "").equals(cfgL.optString("serviceId", ""))) {
-            Diag.always("dswap", "skip L==R (" + cfgL.optString("serviceId") + ")");
+            Diag.window("dswap", "skip L==R (" + cfgL.optString("serviceId") + ")");
             return;
-        }
-        // 左右组合一变（包括进程第一次看到）就开一个 5 秒窗口：窗口内
-        // 的桌面刷新会额外写进 LSPosed 日志，方便用户导出后定位"改完没生效"。
-        String pairKey = sidOf(cfgL) + "|" + sidOf(cfgR);
-        if (!pairKey.equals(sLastPairKey)) {
-            sLastPairKey = pairKey;
-            Diag.openWindow(5000);
-            Diag.window("dswap", "config -> L=" + nameOf(cfgL) + "(" + sidOf(cfgL)
-                    + ") R=" + nameOf(cfgR) + "(" + sidOf(cfgR) + ")");
         }
         List<?> list = (List<?>) listObj;
         // 槽位映射（单侧实验定案，勿凭对调结果反推）：
