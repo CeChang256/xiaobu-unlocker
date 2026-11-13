@@ -7,7 +7,7 @@
 （原生卡 / 快应用卡 / 系统工具卡），不新增任何自己的 UI。
 
 - 模块包名：`io.github.cechang256.xiaobu`
-- 当前版本：**1.32**（versionCode 26）
+- 当前版本：**1.33**（versionCode 27）
 - 注入进程：**只有** `com.oplus.pantanal.ums`（决策引擎），不碰桌面进程
 - 已验证环境：一加 PLG110 / Android 17 / ColorOS `PLG110_17.0.0.105(CN01)` / LSPosed 2.1.1
 

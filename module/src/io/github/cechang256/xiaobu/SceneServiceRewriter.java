@@ -295,6 +295,8 @@ final class SceneServiceRewriter {
 
     /** 上一次看到的左右组合；变化即视为"用户刚改完设置"。 */
     private static String sLastPairKey;
+    /** 上一次记录「查询了但一行都没改写」的时间，用于 60 秒节流。 */
+    private static long sLastNoRewriteMs;
 
     private static String sidOf(JSONObject c) {
         return c == null ? "-" : c.optString("serviceId", "-");
@@ -385,7 +387,7 @@ final class SceneServiceRewriter {
                 if (!applySystemCard(ctx, o, cfgR) && !rewriteSceneEntity(o, cfgR)) {
                     // 两条路都失败：不改写也不计数。留下原卡总比留下半新半旧
                     // 的实体强（后者会污染 launcher 的位置记忆）。
-                    XposedBridge.log(ModuleInit.TAG + ": dswap rewrite skipped R sid="
+                    Diag.always("dswap", "rewrite skipped R sid="
                             + cfgR.optString("serviceId"));
                     continue;
                 }
@@ -420,6 +422,18 @@ final class SceneServiceRewriter {
             Diag.window("dswap", "scene rewrote L" + nL + "/R" + nR
                     + " L=" + (cfgL == null ? "-" : cfgL.optString("name"))
                     + " R=" + (cfgR == null ? "-" : cfgR.optString("name")));
+        } else {
+            // 查询来了、却一行都没改写：说明列表里既没有保证卡槽位，也没有
+            // 场景 210000000 的可用行（ROM 换过卡槽/字段时会这样）。用户看到
+            // 的是"刷新了但卡片没变"，而这里原本静默——补一条永不丢弃的记录，
+            // 一次查询只写一条，按 60 秒节流。
+            long now = System.currentTimeMillis();
+            if (now - sLastNoRewriteMs > 60000L) {
+                sLastNoRewriteMs = now;
+                Diag.always("dswap", "query without rewrite: rows=" + list.size()
+                        + " want L=" + nameOf(cfgL) + "(" + sidOf(cfgL) + ")"
+                        + " R=" + nameOf(cfgR) + "(" + sidOf(cfgR) + ")");
+            }
         }
     }
 
