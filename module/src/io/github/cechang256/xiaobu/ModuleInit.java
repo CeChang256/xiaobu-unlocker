@@ -57,11 +57,11 @@ public final class ModuleInit {
         if (!TARGET.equals(pkg)) {
             // With a static scope this must not happen; log it as evidence that
             // the scope really is narrow.
-            XposedBridge.log(TAG + ": loaded into " + pkg + " process=" + processName
+            XposedBridge.log(TAG + ": loaded into " + pkg + " v=" + version() + " process=" + processName
                     + " (out of scope, ignored)");
             return;
         }
-        XposedBridge.log(TAG + ": loaded into " + pkg + " process=" + processName
+        XposedBridge.log(TAG + ": loaded into " + pkg + " v=" + version() + " process=" + processName
                 + " first=" + first);
         try {
             AppContext.install(cl);
@@ -72,12 +72,12 @@ public final class ModuleInit {
         try {
             SceneServiceRewriter.install(cl);
         } catch (Throwable t) {
-            Diag.log("dswap", "install failed " + t);
+            Diag.always("dswap", "install failed " + t);
         }
         try {
             EditorHook.install(cl);
         } catch (Throwable t) {
-            Diag.log("editor", "install failed " + t);
+            Diag.always("editor", "install failed " + t);
         }
         try {
             welcome(pkg, processName);
@@ -89,7 +89,7 @@ public final class ModuleInit {
         try {
             DefaultServiceHook.install(cl);
         } catch (Throwable t) {
-            Diag.log("init", "model hook failed " + t);
+            Diag.always("init", "model hook failed " + t);
         }
     }
 
@@ -114,7 +114,7 @@ public final class ModuleInit {
                             try {
                                 sendHello(c, pkg, processName);
                             } catch (Throwable t) {
-                                Diag.log("init", "hello failed " + t);
+                                Diag.always("init", "hello failed " + t);
                             }
                             afterApplication(pkg, processName);
                             return;
@@ -145,12 +145,12 @@ public final class ModuleInit {
             try {
                 healInterruptedRoundTrip();
             } catch (Throwable t) {
-                Diag.log("init", "self-heal failed " + t);
+                Diag.always("init", "self-heal failed " + t);
             }
             try {
                 EditorHook.bootKickNotify();
             } catch (Throwable t) {
-                Diag.log("init", "boot kick failed " + t);
+                Diag.always("init", "boot kick failed " + t);
             }
         }
     }

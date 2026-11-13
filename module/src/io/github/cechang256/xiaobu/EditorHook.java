@@ -1016,7 +1016,7 @@ final class EditorHook {
                                 ModuleInit.log("editor save pair: left=" + sidL
                                         + " right=" + sidR
                                         + " (system h passthrough)");
-                                Diag.log("editor", "pair saved from editor");
+                                Diag.always("editor", "saved L=" + sidL + " R=" + sidR);
                                 // 延迟补拍：launcher 的观察者/渲染管线可能晚于
                                 // 通知就绪，1.5s 后再补一轮双油门覆盖竞态。
                                 new android.os.Handler(android.os.Looper.getMainLooper())

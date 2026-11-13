@@ -14,8 +14,10 @@ import java.util.Locale;
  *
  * The hooked processes cannot write this app's private files, so every line is
  * pushed through the exported provider and appended to diag.log in the app's own
- * data dir. That makes on-device evidence collectable without adb or root: open
- * the app, hit "日志", copy or share.
+ * data dir. Only the lines that matter for support reach the LSPosed log, which
+ * the user can export from the manager without adb or root: the config change,
+ * the desktop refresh within five seconds of it, and every failure. Everything
+ * else stays in diag.log, so steady state still produces no logcat traffic.
  *
  * Logging must never throw and never recurse: pushing goes through a
  * ContentResolver call, which the assistantscreen hooks also observe, so those
@@ -54,6 +56,43 @@ public final class Diag {
     /** True when the calling thread is already inside the logging pipeline. */
     static boolean inside() {
         return Boolean.TRUE.equals(INSIDE.get());
+    }
+
+    /** 诊断窗口内最多镜像多少行，防止意外刷屏。 */
+    private static final int MAX_WINDOW_LINES = 40;
+    /** 窗口截止时间。 */
+    private static volatile long sWindowUntil;
+    private static int sWindowLines;
+
+    /**
+     * 打开一个诊断窗口：配置刚变化，接下来这几秒的桌面刷新值得记。
+     * 窗口外的稳态一条都不写。
+     */
+    static void openWindow(long ms) {
+        sWindowUntil = System.currentTimeMillis() + ms;
+        sWindowLines = 0;
+    }
+
+    /** 配置变化与随之而来的桌面刷新：只在窗口内写进 LSPosed 日志。 */
+    static void window(String tag, String message) {
+        log(tag, message);
+        if (System.currentTimeMillis() < sWindowUntil && sWindowLines < MAX_WINDOW_LINES) {
+            sWindowLines++;
+            mirror(tag, message);
+        }
+    }
+
+    /** 保存设置与所有失败：不看窗口，一律进 LSPosed 日志。 */
+    static void always(String tag, String message) {
+        log(tag, message);
+        mirror(tag, message);
+    }
+
+    private static void mirror(String tag, String message) {
+        try {
+            io.github.cechang256.xiaobu.xp.XposedBridge.log("[" + tag + "] " + message);
+        } catch (Throwable ignored) {
+        }
     }
 
     static void log(String tag, String message) {

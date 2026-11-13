@@ -293,6 +293,17 @@ final class SceneServiceRewriter {
         return newL.equals(pr) && newR.equals(pl);
     }
 
+    /** 上一次看到的左右组合；变化即视为"用户刚改完设置"。 */
+    private static String sLastPairKey;
+
+    private static String sidOf(JSONObject c) {
+        return c == null ? "-" : c.optString("serviceId", "-");
+    }
+
+    private static String nameOf(JSONObject c) {
+        return c == null ? "-" : c.optString("name", "-");
+    }
+
     private static void rewriteSceneList(Object listObj) throws org.json.JSONException {
         if (!(listObj instanceof List)) {
             return;
@@ -334,9 +345,17 @@ final class SceneServiceRewriter {
         // 左右同卡会让插件丢弃整个组合（E7 实证），此时整体不动最安全。
         if (cfgR != null && cfgL != null
                 && cfgR.optString("serviceId", "").equals(cfgL.optString("serviceId", ""))) {
-            XposedBridge.log(ModuleInit.TAG + ": dswap skip L==R ("
-                    + cfgL.optString("serviceId") + ")");
+            Diag.always("dswap", "skip L==R (" + cfgL.optString("serviceId") + ")");
             return;
+        }
+        // 左右组合一变（包括进程第一次看到）就开一个 5 秒窗口：窗口内
+        // 的桌面刷新会额外写进 LSPosed 日志，方便用户导出后定位"改完没生效"。
+        String pairKey = sidOf(cfgL) + "|" + sidOf(cfgR);
+        if (!pairKey.equals(sLastPairKey)) {
+            sLastPairKey = pairKey;
+            Diag.openWindow(5000);
+            Diag.window("dswap", "config -> L=" + nameOf(cfgL) + "(" + sidOf(cfgL)
+                    + ") R=" + nameOf(cfgR) + "(" + sidOf(cfgR) + ")");
         }
         List<?> list = (List<?>) listObj;
         // 槽位映射（单侧实验定案，勿凭对调结果反推）：
@@ -375,7 +394,7 @@ final class SceneServiceRewriter {
             if (cfgL != null && !leftDone) {
                 // 左栏：第一张非固定卡行 → col_0
                 if (!applySystemCard(ctx, o, cfgL) && !rewriteSceneEntity(o, cfgL)) {
-                    XposedBridge.log(ModuleInit.TAG + ": dswap rewrite skipped L sid="
+                    Diag.always("dswap", "rewrite skipped L sid="
                             + cfgL.optString("serviceId"));
                     continue;
                 }
@@ -391,7 +410,7 @@ final class SceneServiceRewriter {
         if (nR > 0 || nL > 0) {
             // 常规改写不再写 logcat（这条每次查询都会命中，实测约 1.8 条/秒）。
             // 需要原始细节时看 diag.log；这里只留一条有节流的记录。
-            Diag.log("dswap", "scene rewrote L" + nL + "/R" + nR
+            Diag.window("dswap", "scene rewrote L" + nL + "/R" + nR
                     + " L=" + (cfgL == null ? "-" : cfgL.optString("name"))
                     + " R=" + (cfgR == null ? "-" : cfgR.optString("name")));
         }
@@ -617,7 +636,7 @@ final class SceneServiceRewriter {
             }
         }
         if (n > 0) {
-            Diag.log("dswap", "rewrote " + n + " entity(ies) -> "
+            Diag.window("dswap", "rewrote " + n + " entity(ies) -> "
                     + cfg.optString("serviceId") + " (" + cfg.optString("name") + ")");
         }
     }
@@ -759,17 +778,17 @@ final class SceneServiceRewriter {
             String gotCfg = getStr(target, "cardConfig");
             if (!sid.equals(gotSid) || gotCfg == null || gotCfg.length() == 0) {
                 restoreAll(target, snap);
-                XposedBridge.log(ModuleInit.TAG + ": dswap syscard verify FAIL want="
+                Diag.always("dswap", "syscard verify FAIL want="
                         + sid + " got=" + gotSid + " cfgEmpty=" + (gotCfg == null
                         || gotCfg.length() == 0) + " -> rolled back");
                 return false;
             }
             stampUserSelected(target); // 双保险：确保 isUserSelected 存在
             // 每次改写都会走到这里，降为 diag（有节流），不再写 logcat。
-            Diag.log("dswap", "syscard applied sid=" + sid + " via " + t.getName());
+            Diag.window("dswap", "syscard applied sid=" + sid + " via " + t.getName());
             return true;
         } catch (Throwable tt) {
-            XposedBridge.log(ModuleInit.TAG + ": dswap syscard fail sid=" + sid + " " + tt);
+            Diag.always("dswap", "syscard fail sid=" + sid + " " + tt);
             return false;
         }
     }

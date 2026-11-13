@@ -2,6 +2,10 @@
 
 版本号与 `versionCode` 均取自 `AndroidManifest.xml`。
 
+## 1.31 — versionCode 25
+
+- 新增：设置变更、变更后几秒内的桌面刷新、以及模块报错会写入 LSPosed 日志，可直接在管理器「日志」页导出；其余时间不写，日志保持干净。
+
 ## 1.30 — versionCode 24
 
 - 优化：对调时系统卡显示时间缩短。
