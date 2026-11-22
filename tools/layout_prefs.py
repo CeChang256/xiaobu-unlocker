@@ -18,6 +18,10 @@ Examples
     # flip a feature flag (bool / int / string are auto-detected)
     python layout_prefs.py set-feature prefs.xml roundms=1200
 
+Note (1.35+): `dswap` no longer needs to be present at all -- the desktop rewrite
+gate follows `mode` ("custom" = on). Set `features.dswap` only to *override*
+(an explicit `false` still wins over mode=custom).
+
     # write into a different file
     python layout_prefs.py set-cols prefs.xml -o out.xml --right 536875395 月历
 

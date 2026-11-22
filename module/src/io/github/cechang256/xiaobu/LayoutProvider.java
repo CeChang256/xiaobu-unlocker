@@ -94,6 +94,19 @@ public final class LayoutProvider extends ContentProvider {
 
     @Override
     public boolean onCreate() {
+        // 1.34 首启补种（1.35 起只补 model/custom_tab，不再碰 dswap）：
+        // 1.33 从不写 features，而当时的闸门是 feature(ctx,"dswap",false)，
+        // 键缺失即为关（新机实测只剩 "skip: dswap off"）。1.35 闸门已改为
+        // mode 驱动，这里保留只是为了把两项"默认 true"写实、让配置自解释。
+        Context ctx = getContext();
+        if (ctx != null) {
+            try {
+                synchronized (LAYOUT_LOCK) {
+                    readSeeded(ctx);
+                }
+            } catch (Throwable ignored) {
+            }
+        }
         return true;
     }
 
@@ -109,9 +122,12 @@ public final class LayoutProvider extends ContentProvider {
             return out;
         }
         if (METHOD_GET.equals(method)) {
-            android.content.SharedPreferences p = prefs(ctx);
-            out.putString(KEY_LAYOUT, p.getString(PREF_LAYOUT, null));
-            out.putBoolean(KEY_ENABLED, p.getBoolean(PREF_ENABLED, true));
+            // 读也补种：ums 进程第一次来取配置时就把 features 落地，
+            // 哪怕用户此后一直不打开编辑器。
+            synchronized (LAYOUT_LOCK) {
+                out.putString(KEY_LAYOUT, readSeeded(ctx));
+                out.putBoolean(KEY_ENABLED, prefs(ctx).getBoolean(PREF_ENABLED, true));
+            }
         } else if (METHOD_SET_COLUMN.equals(method)) {
             // 由编辑器截流 hook（EditorHook）跨进程调用：
             // 把用户在原生编辑器里选的卡写入 tab_N.col_M（serviceId 为空 = 移除）。
@@ -146,8 +162,7 @@ public final class LayoutProvider extends ContentProvider {
                         // commit() 而不是 apply()：调用方（往返状态机）拿
                         // ok=true 就要认定"已持久"，apply 是异步的，返回时
                         // 数据还在内存里，进程被杀就丢了。
-                        ok = prefs(ctx).edit()
-                                .putString(PREF_LAYOUT, root.toString()).commit();
+                        ok = writeRoot(ctx, root);
                     }
                 } catch (Throwable ignored) {
                 }
@@ -192,6 +207,64 @@ public final class LayoutProvider extends ContentProvider {
         }
     }
 
+    /**
+     * 1.34：读 layout_json 并补种 features（1.35 起只补 model/custom_tab），必要时落盘。
+     *
+     * <p>返回的文本保证"如果原本有 features 缺键，现在也补齐了"，
+     * 调用方不会再把缺键配置读出去。调用方必须已持 {@link #LAYOUT_LOCK}。
+     *
+     * <p>不补 dswap：闸门由 mode 推断（{@link LayoutStore#dswapOn}），补一个显式
+     * 值等于把实时选择冻成快照。
+     */
+    private static String readSeeded(Context ctx) {
+        String raw = prefs(ctx).getString(PREF_LAYOUT, null);
+        if (TextUtils.isEmpty(raw)) {
+            return raw;
+        }
+        try {
+            JSONObject root = new JSONObject(raw);
+            if (!LayoutSeed.seed(root)) {
+                return raw;
+            }
+            String fixed = root.toString();
+            if (prefs(ctx).edit().putString(PREF_LAYOUT, fixed).commit()) {
+                logSeed(ctx, "read");
+                return fixed;
+            }
+            return raw;
+        } catch (Throwable t) {
+            return raw;
+        }
+    }
+
+    /**
+     * 1.34：所有保存路径的唯一出口 —— 写盘前补种 features（1.35 起只补
+     * model/custom_tab，dswap 不再补种）。
+     *
+     * <p>这样 setColumns / setColumn / setMode 任一条路都不会再把
+     * 缺 {features.model} 的配置写出去。调用方必须已持 {@link #LAYOUT_LOCK}。
+     */
+    private static boolean writeRoot(Context ctx, JSONObject root) {
+        boolean seeded = LayoutSeed.seed(root);
+        boolean ok = prefs(ctx).edit()
+                .putString(PREF_LAYOUT, root.toString()).commit();
+        if (ok && seeded) {
+            logSeed(ctx, "save");
+        }
+        return ok;
+    }
+
+    /** 补种留痕，供设备侧 diag.log 核对（与 Diag 自身的时间戳格式一致）。 */
+    private static void logSeed(Context ctx, String where) {
+        try {
+            Diag.appendFile(ctx, new java.text.SimpleDateFormat("HH:mm:ss.SSS",
+                    java.util.Locale.US).format(new java.util.Date())
+                    + " [" + android.os.Process.myPid() + "] config: seed features"
+                    + " (model,custom_tab) (" + where + ")");
+        } catch (Throwable ignored) {
+        }
+    }
+
     /** 把一栏写进 tab 对象（内部用，调用方必须已持锁）。 */
     private static void putColumn(JSONObject tabObj, String col, String sid,
             int type, int size, String name) throws org.json.JSONException {
@@ -233,8 +306,7 @@ public final class LayoutProvider extends ContentProvider {
                 }
                 putColumn(tabObj, col, sid, extras.getInt("type", -1),
                         extras.getInt("size", 1), extras.getString("name", ""));
-                return prefs(ctx).edit()
-                        .putString(PREF_LAYOUT, root.toString()).commit();
+                return writeRoot(ctx, root);
             }
         } catch (Throwable ignored) {
             return false;
@@ -278,8 +350,7 @@ public final class LayoutProvider extends ContentProvider {
                 if (!TextUtils.isEmpty(mode)) {
                     root.put("mode", mode);
                 }
-                return prefs(ctx).edit()
-                        .putString(PREF_LAYOUT, root.toString()).commit();
+                return writeRoot(ctx, root);
             }
         } catch (Throwable ignored) {
             return false;

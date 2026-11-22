@@ -373,6 +373,29 @@ final class LayoutStore {
         }
     }
 
+    /**
+     * 桌面决策层改写（dswap）的闸门（1.35 起）。
+     *
+     * <p>语义：{@code features.dswap} 是<strong>可选覆盖</strong>——显式 true/false 都
+     * 照办；键缺失时由 {@link #mode} 决定（custom → 开，native → 关）。用户选中第三个
+     * 「自定义」并保存后 mode 就是 custom，于是第一次查询即生效，不需要任何键、
+     * 也不需要"先打开一次编辑器再保存"来点亮配置。
+     *
+     * <p>注意 {@code mode()} 自带两条兼容逻辑，这里刻意复用它而不是直接读 JSON 的
+     * "mode" 字段：①从没写过 mode 的老配置按 col_1 推断 custom；②往返标记过期按
+     * custom 生效（自愈）。闸门若绕过它们，"切回自定义后不复写"就会重现。
+     *
+     * @param viaExplicit 非 null 且长度 ≥1 时写回来源：true = 由显式键决定，
+     *                    false = 由 mode 推断（只有 diag 用，便于现场判断）
+     */
+    static boolean dswapOn(Context ctx, boolean[] viaExplicit) {
+        Boolean explicit = SwapGate.explicit(rawLayout(ctx));
+        if (viaExplicit != null && viaExplicit.length > 0) {
+            viaExplicit[0] = explicit != null;
+        }
+        return SwapGate.on(explicit, mode(ctx));
+    }
+
     /** tabIndex -> [col0, col1]; null entries mean "leave the ROM default". */
     static Column[] columnsFor(Context ctx, int tabIndex) {
         try {

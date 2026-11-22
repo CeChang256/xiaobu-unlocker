@@ -317,20 +317,27 @@ final class SceneServiceRewriter {
         if (ctx == null) {
             return;
         }
-        boolean on = LayoutStore.enabled(ctx)
-                && LayoutStore.feature(ctx, "dswap", false);
+        // 1.35：闸门由 mode 驱动（features.dswap 只是可选覆盖）。enabled 仍是总开关；
+        // 即使它关掉也求值一次 gate，只为让 diag 能写出"来源"而不是含糊的 off。
+        boolean enabled = LayoutStore.enabled(ctx);
+        boolean[] viaExplicit = new boolean[1];
+        boolean gate = LayoutStore.dswapOn(ctx, viaExplicit);
+        boolean on = enabled && gate;
         String mode = LayoutStore.mode(ctx);
         JSONObject cfgR = on ? rightColumnConfig(ctx) : null;
         JSONObject cfgL = on ? leftColumnConfig(ctx) : null;
-        // 开关 / mode / 左右组合任何一项变化（包括进程第一次看到）都开一个
+        // 开关 / mode / 闸门来源 / 左右组合任何一项变化（包括进程第一次看到）都开一个
         // 5 秒窗口：窗口内的桌面刷新会额外写进 LSPosed 日志，用户导出后
         // 就能定位"改完没生效"到底卡在哪一步。
         String pairKey = (on ? "on" : "off") + "|" + mode + "|"
+                + (viaExplicit[0] ? "explicit" : "mode") + "|"
                 + sidOf(cfgL) + "|" + sidOf(cfgR);
         if (!pairKey.equals(sLastPairKey)) {
             sLastPairKey = pairKey;
             Diag.openWindow(5000);
-            Diag.window("dswap", "config -> mode=" + mode + " dswap=" + (on ? "on" : "off")
+            Diag.window("dswap", "config -> mode=" + mode
+                    + " dswap=" + (enabled ? SwapGate.label(on, viaExplicit[0])
+                            : (gate ? "on(layout)" : "off(layout)"))
                     + " L=" + nameOf(cfgL) + "(" + sidOf(cfgL) + ")"
                     + " R=" + nameOf(cfgR) + "(" + sidOf(cfgR) + ")");
         }
@@ -637,8 +644,8 @@ final class SceneServiceRewriter {
         if (ctx == null) {
             return;
         }
-        if (!LayoutStore.enabled(ctx)
-                || !LayoutStore.feature(ctx, "dswap", false)) {
+        // 1.35：与 rewriteSceneList 同一道闸门（mode=custom 即开，features.dswap 可选覆盖）。
+        if (!LayoutStore.enabled(ctx) || !LayoutStore.dswapOn(ctx, null)) {
             return;
         }
         String mode = LayoutStore.mode(ctx);

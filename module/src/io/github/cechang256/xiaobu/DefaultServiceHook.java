@@ -68,6 +68,9 @@ final class DefaultServiceHook {
     private static java.lang.reflect.Method mUpdateChecked;
     private static Class<?> sEntityCls;
     private static Class<?> sListCls;
+    /** 目标类是否解析成功：缺失时运行期路径显式跳过并留痕，而不是抛 NPE。 */
+    private static volatile boolean sEntityReady;
+    private static volatile boolean sBeanReady;
 
     /** Name of the extra tab this module appends to the stock two. */
     private static final String CUSTOM_TAB_NAME = "系统工具+月历";
@@ -85,6 +88,23 @@ final class DefaultServiceHook {
     }
 
     /**
+     * 反射查类，**缺失不致命**：只停掉依赖它的那一组，其余注册继续。
+     *
+     * <p>这里必须逐类兜底：1.13 曾把四个 findClass 直接放在 install() 里，
+     * 任一类被 ROM 改名就抛异常，getDefaultServiceList 的 hook 都没装上，
+     * 而 diag.log 只有一条 model hook failed，看不出缺的是哪个类。
+     */
+    private static Class<?> classOf(ClassLoader cl, String role, String name) {
+        try {
+            return XposedHelpers.findClass(name, cl);
+        } catch (Throwable t) {
+            // Diag.always 已无条件镜像进 LSPosed 日志，这里不再重复写一条。
+            Diag.always("model", "class missing: " + name + " (" + role + ") " + t);
+            return null;
+        }
+    }
+
+    /**
      * 反射查方法，**缺失不致命**。
      *
      * <p>这里每一个查找都必须是「可选」的：1.13 曾在 updateCheckedPosition 上
@@ -95,21 +115,34 @@ final class DefaultServiceHook {
      */
     private static java.lang.reflect.Method methodOf(Class<?> cls, String name,
             Class<?>... types) {
+        if (cls == null) {
+            // 类本身就没有：classOf 已经留过 "class missing"，这里不再按句柄刷噪声。
+            return null;
+        }
         try {
             return cls.getMethod(name, types);
         } catch (Throwable t) {
-            String who = cls == null ? "null" : cls.getSimpleName();
+            String who = cls.getSimpleName();
             Diag.log("model", "missing method " + who + "." + name + " " + t);
             XposedBridge.log(ModuleInit.TAG + ": missing method " + who + "." + name + " " + t);
             return null;
         }
     }
 
-    static void install(ClassLoader cl) throws Throwable {
-        Class<?> listCls = XposedHelpers.findClass(CLS_LIST, cl);
-        Class<?> entityCls = XposedHelpers.findClass(CLS_ENTITY, cl);
-        Class<?> beanCls = XposedHelpers.findClass(CLS_BEAN, cl);
-        Class<?> configCls = XposedHelpers.findClass(CLS_CONFIG, cl);
+    /** 缺类时显式跳过依赖它的功能，并在 diag.log 留下 skip 行（连续重复行会折叠）。 */
+    private static boolean need(boolean ready, String ref, String feature) {
+        if (!ready) {
+            Diag.log("model", "skip: " + feature + " (" + ref + " missing)");
+        }
+        return ready;
+    }
+
+    static void install(ClassLoader cl) {
+        // 四个类各自查、各自兜底：缺哪个只停依赖它的那一组，其余照常注册。
+        Class<?> listCls = classOf(cl, "tab list", CLS_LIST);
+        Class<?> entityCls = classOf(cl, "tab entity", CLS_ENTITY);
+        Class<?> beanCls = classOf(cl, "service bean", CLS_BEAN);
+        Class<?> configCls = classOf(cl, "card config", CLS_CONFIG);
 
         mGetDefaultServiceList = methodOf(listCls, "getDefaultServiceList");
         mGetComposeServices = methodOf(entityCls, "getComposeServices");
@@ -134,10 +167,14 @@ final class DefaultServiceHook {
                 int.class, int.class);
         sEntityCls = entityCls;
         sListCls = listCls;
+        sEntityReady = entityCls != null;
+        sBeanReady = beanCls != null;
 
         if (mGetDefaultServiceList == null) {
-            XposedBridge.log(ModuleInit.TAG
-                    + ": model hook skipped (getDefaultServiceList not found)");
+            String why = listCls == null
+                    ? "class missing: " + CLS_LIST
+                    : "method missing: getDefaultServiceList";
+            Diag.always("model", "model hook skipped (" + why + ")");
             return;
         }
         XposedBridge.hookMethod(mGetDefaultServiceList, new XC_MethodHook() {
@@ -206,6 +243,10 @@ final class DefaultServiceHook {
     private static void appendCustomTab(List<Object> tabs, Object parent) throws Throwable {
         android.content.Context ctx = AppContext.get();
         if (ctx == null || !LayoutStore.feature(ctx, LayoutStore.FEATURE_CUSTOM_TAB, true)) {
+            return;
+        }
+        if (!need(sEntityReady, "DefaultServiceEntity", "append custom tab")
+                || !need(sBeanReady, "ServiceBean", "append custom tab")) {
             return;
         }
         for (Object t : tabs) {
@@ -522,7 +563,12 @@ final class DefaultServiceHook {
         }
     }
 
-    static boolean writeComposeColumn(Object entity, Object serviceBean, int copyComposeCol) {        try {
+    static boolean writeComposeColumn(Object entity, Object serviceBean, int copyComposeCol) {
+        if (!need(sEntityReady, "DefaultServiceEntity", "write compose column")
+                || !need(sBeanReady, "ServiceBean", "write compose column")) {
+            return false;
+        }
+        try {
             List<Object> compose = (List<Object>) mGetComposeServices.invoke(entity);
             if (compose == null || compose.size() <= copyComposeCol || serviceBean == null) {
                 return false;
@@ -537,7 +583,11 @@ final class DefaultServiceHook {
             mSetSize.invoke(target, mGetSize.invoke(serviceBean));
             Object cfg = mGetCardConfig.invoke(serviceBean);
             if (cfg != null) {
-                mSetCardConfig.invoke(target, cfg);
+                if (mSetCardConfig == null) {
+                    Diag.log("model", "skip: card config (CardConfigInfo missing)");
+                } else {
+                    mSetCardConfig.invoke(target, cfg);
+                }
             }
             Diag.log("model", "compose col " + copyComposeCol + " -> "
                     + mGetServiceId.invoke(serviceBean));
@@ -554,6 +604,10 @@ final class DefaultServiceHook {
      */
     @SuppressWarnings("unchecked")
     private static void syncCustomTabPreview(List<Object> tabs) throws Throwable {
+        if (!need(sEntityReady, "DefaultServiceEntity", "preview sync")
+                || !need(sBeanReady, "ServiceBean", "preview sync")) {
+            return;
+        }
         Object entity = null;
         for (Object t : tabs) {
             if (t == null) {
@@ -613,6 +667,10 @@ final class DefaultServiceHook {
     /** 把 entity 的双列预览 bean 同步成当前配置（col_0 / col_1）。 */
     @SuppressWarnings("unchecked")
     private static void syncEntityPreview(Object entity) throws Throwable {
+        if (!need(sEntityReady, "DefaultServiceEntity", "preview sync")
+                || !need(sBeanReady, "ServiceBean", "preview sync")) {
+            return;
+        }
         android.content.Context ctx = AppContext.get();
         if (ctx == null) {
             return;
@@ -652,7 +710,11 @@ final class DefaultServiceHook {
                 mSetSize.invoke(bean, (Integer) mGetSize.invoke(candidate));
                 Object cfg = mGetCardConfig.invoke(candidate);
                 if (cfg != null) {
-                    mSetCardConfig.invoke(bean, cfg);
+                    if (mSetCardConfig == null) {
+                        Diag.log("model", "skip: card config (CardConfigInfo missing)");
+                    } else {
+                        mSetCardConfig.invoke(bean, cfg);
+                    }
                 }
                 Diag.log("model", "custom tab col " + col + " synced -> " + want);
             }
