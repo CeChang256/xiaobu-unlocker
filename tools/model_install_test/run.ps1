@@ -8,8 +8,15 @@ $Sep = [IO.Path]::PathSeparator
 $Sdk = $env:ANDROID_HOME
 if (-not $Sdk) { $Sdk = $env:ANDROID_SDK_ROOT }
 if (-not $Sdk) { throw "set ANDROID_HOME to the Android SDK" }
+# [version]"34" throws on PowerShell 7 (the CI runner names the platform
+# "android-34", while a local SDK may name it "android-37.0"), so pad the
+# single-number case before casting.
 $AndroidJar = Get-ChildItem (Join-Path $Sdk "platforms") -Directory |
-    Sort-Object { [version]($_.Name -replace '[^0-9.]', '') } |
+    Sort-Object {
+        $v = $_.Name -replace '[^0-9.]', ''
+        if ($v -notmatch '\.') { $v = "$v.0" }
+        [version]$v
+    } |
     ForEach-Object { Join-Path $_.FullName "android.jar" } |
     Where-Object { Test-Path $_ } | Select-Object -Last 1
 if (-not $AndroidJar) { throw "no platforms\android-*\android.jar under $Sdk" }
