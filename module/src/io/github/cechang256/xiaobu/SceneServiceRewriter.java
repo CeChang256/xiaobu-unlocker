@@ -1249,13 +1249,16 @@ final class SceneServiceRewriter {
     }
 
     /**
-     * 系统工厂类候选（按 ums 版本混淆名不同）：nv.p = 2026-11 实测版本，
-     * mv.t = 本地分析样本版本。签名一致：d(Application,String,int,long,boolean)→String
-     * 与 b(String,long,String,SceneResultEntity,boolean)→SceneResultEntity。
+     * 系统工厂类候选（按 ums 版本混淆名不同）：17.24.8 起宿主去混淆，
+     * 等价类是 com.pantanal.server.decision.util.n（原 com.oplus.sdp.nv.p）；
+     * mv.t 只存在于更早的分析样本。签名一致：
+     * d(Application,String,int,long,boolean)→String 与
+     * b(String,long,String,SceneResultEntity,boolean)→SceneResultEntity。
      */
-    private static final String[] FACTORY_CLASSES = {
-            "com.oplus.sdp.nv.p", "com.oplus.sdp.mv.t"
-    };
+    private static final String[] FACTORY_CLASSES = HookTargets.SCENE_FACTORY;
+
+    /** 工厂类全缺失的告警只打一次（否则每张卡刷一条 logcat）。 */
+    private static volatile boolean sFactoryWarned;
 
     /**
      * 用系统自己的工厂（d + b）对任意 sid 构造权威实体，再原位覆盖目标实体。
@@ -1293,7 +1296,11 @@ final class SceneServiceRewriter {
                 }
             }
             if (t == null) {
-                XposedBridge.log(ModuleInit.TAG + ": dswap syscard factory class not found");
+                if (!sFactoryWarned) {
+                    sFactoryWarned = true;
+                    Diag.always("dswap", HookTargets.noClassMessage(
+                            "syscard factory", FACTORY_CLASSES));
+                }
                 return false;
             }
             String fci = (String) d.invoke(null, app, sid, 1, ts, false);

@@ -341,52 +341,71 @@ final class EditorHook {
         // 系统预览卡区下方有一行 tab 标题（自定义 tab 的标题为空串 → 红框空白）；
         // 左右交互改为直接点击预览的左卡/右卡，选中卡描边高亮。
         try {
-            Class<?> hCls = XposedHelpers.findClass(
-                    "com.oplus.ums.groupcard.defaultservice.activity.h", cl);
-            XposedBridge.hookAllMethods(hCls, "onBindViewHolder", new XC_MethodHook() {
+            final String[] bindHit = new String[1];
+            Class<?> bindCls = HookTargets.first(new HookTargets.Resolver() {
                 @Override
-                protected void afterHookedMethod(MethodHookParam param) {
-                    try {
-                        if (DefaultServiceHook.customTabPos < 0
-                                || !(param.args[1] instanceof Integer)
-                                || (Integer) param.args[1]
-                                        != DefaultServiceHook.customTabPos) {
-                            return;
-                        }
-                        Object holder = param.args[0];
-                        // 卡片池适配器 c 继承自预览适配器 h，复用同一个
-                        // onBindViewHolder；池子的 holder（c$a）没有 f/g 字段。
-                        // 不先判一下就取字段会抛 NoSuchFieldError 刷日志
-                        //（实测「editor bind hook fail ... c$a#f」）。
-                        if (!hasField(holder.getClass(), "f")
-                                || !hasField(holder.getClass(), "g")) {
-                            return;
-                        }
-                        // holder 字段（反编译 h$a）：f/g=预览卡容器（左右顺序
-                        // 不确定！）、c=tab 标题、d=compose[0]（左栏）ImageView。
-                        // 用 d 的祖先链反查哪个容器是左，不硬编码假设。
-                        final View f = (View) XposedHelpers.getObjectField(holder, "f");
-                        final View gv = (View) XposedHelpers.getObjectField(holder, "g");
-                        final View left = isLeftContainer(holder, f, gv) ? f : gv;
-                        final View right = (left == f) ? gv : f;
-                        curHolder = holder;
-                        // 左右判定诊断：leftIsF=false 表示 compose[0] 的视图
-                        // 在 holder 的 g 容器里（f/g 顺序与直觉相反的实证）。
-                        ModuleInit.log("preview sides: leftIsF=" + (left == f));
-                        Object title = XposedHelpers.getObjectField(holder, "c");
-                        if (title instanceof TextView) {
-                            ((TextView) title).setText("自定义（插件接管）");
-                        }
-                        // 预览卡本身不可点（必须点卡上的"编辑"标签才进入编辑态）
-                        left.setOnClickListener(null);
-                        right.setOnClickListener(null);
-                        refreshCardsPair(left, right);
-                    } catch (Throwable t) {
-                        ModuleInit.log("editor bind hook fail " + t);
-                    }
+                public Class<?> find(String fqn) {
+                    return XposedHelpers.findClass(fqn, cl);
                 }
-            });
-            ModuleInit.log("editor bind hook installed");
+            }, HookTargets.EDITOR_PREVIEW, bindHit);
+            if (bindCls == null) {
+                Diag.always("editor", HookTargets.noClassMessage(
+                        "editor bind hook", HookTargets.EDITOR_PREVIEW, "onBindViewHolder"));
+            } else {
+                int bindMatched = HookTargets.countMethods(bindCls, "onBindViewHolder");
+                if (bindMatched == 0) {
+                    // 类在、方法不在：hookAllMethods 匹配 0 个方法且不抛异常，旧代码
+                    // 照样打印 installed，回调永远不来（17.24.8 把预览适配器由 h 挪到
+                    // g 正是这种形态）。这里必须留一条明确的日志，不能静默。
+                    Diag.always("editor",
+                            HookTargets.zeroMethodMessage(bindHit[0], "onBindViewHolder"));
+                } else {
+                    XposedBridge.hookAllMethods(bindCls, "onBindViewHolder", new XC_MethodHook() {
+                        @Override
+                        protected void afterHookedMethod(MethodHookParam param) {
+                            try {
+                                if (DefaultServiceHook.customTabPos < 0
+                                        || !(param.args[1] instanceof Integer)
+                                        || (Integer) param.args[1]
+                                                != DefaultServiceHook.customTabPos) {
+                                    return;
+                                }
+                                Object holder = param.args[0];
+                                // activity.c 是卡片池适配器，与预览适配器（g/h）是两个独立的
+                                // Adapter，同名的 onBindViewHolder 不会进这个回调。字段探测只为
+                                // 防 NoSuchFieldError：拿不到 f/g 的 holder 直接跳过。
+                                if (!hasField(holder.getClass(), "f")
+                                        || !hasField(holder.getClass(), "g")) {
+                                    return;
+                                }
+                                // holder 字段（反编译 h$a）：f/g=预览卡容器（左右顺序
+                                // 不确定！）、c=tab 标题、d=compose[0]（左栏）ImageView。
+                                // 用 d 的祖先链反查哪个容器是左，不硬编码假设。
+                                final View f = (View) XposedHelpers.getObjectField(holder, "f");
+                                final View gv = (View) XposedHelpers.getObjectField(holder, "g");
+                                final View left = isLeftContainer(holder, f, gv) ? f : gv;
+                                final View right = (left == f) ? gv : f;
+                                curHolder = holder;
+                                // 左右判定诊断：leftIsF=false 表示 compose[0] 的视图
+                                // 在 holder 的 g 容器里（f/g 顺序与直觉相反的实证）。
+                                ModuleInit.log("preview sides: leftIsF=" + (left == f));
+                                Object title = XposedHelpers.getObjectField(holder, "c");
+                                if (title instanceof TextView) {
+                                    ((TextView) title).setText("自定义（插件接管）");
+                                }
+                                // 预览卡本身不可点（必须点卡上的"编辑"标签才进入编辑态）
+                                left.setOnClickListener(null);
+                                right.setOnClickListener(null);
+                                refreshCardsPair(left, right);
+                            } catch (Throwable t) {
+                                ModuleInit.log("editor bind hook fail " + t);
+                            }
+                        }
+                    });
+                    ModuleInit.log("editor bind hook installed n=" + bindMatched
+                            + " on " + bindHit[0]);
+                }
+            }
         } catch (Throwable t) {
             ModuleInit.log("editor bind hook fail " + t);
         }
@@ -1759,6 +1778,7 @@ final class EditorHook {
      * afterHookedMethod 检测到就补原生配置油门（写入发生在 before 返回后）。
      */
     private static volatile boolean sNativePassThrough;
+    private static volatile boolean sLeftSidWarned;
 
     /**
      * 原生配置链路油门：刷新 ums 进程里系统缓存的读取器（nv.p.e → 静态 f），
@@ -1773,11 +1793,14 @@ final class EditorHook {
             if (ctx == null) {
                 return;
             }
-            try {
-                Class<?> npc = XposedHelpers.findClass(
-                        "com.oplus.sdp.nv.p", sClassLoader);
-                XposedHelpers.callStaticMethod(npc, "e", ctx);
-            } catch (Throwable ignored) {
+            Class<?> npc = leftSidHelper();
+            if (npc == null) {
+                warnLeftSidHelper("nativeKick");
+            } else {
+                try {
+                    XposedHelpers.callStaticMethod(npc, "e", ctx);
+                } catch (Throwable ignored) {
+                }
             }
             try {
                 ctx.getContentResolver().notifyChange(
@@ -2010,7 +2033,11 @@ final class EditorHook {
     static String nativeLeftSidFresh() {
         try {
             Context ctx = AppContext.get();
-            Class<?> p = XposedHelpers.findClass("com.oplus.sdp.nv.p", sClassLoader);
+            Class<?> p = leftSidHelper();
+            if (p == null) {
+                warnLeftSidHelper("nativeLeftSidFresh");
+                return null;
+            }
             // 系统自己的 getter：e(Context) 读取 group_card_user_selected_config
             // 到静态 f（HomeLeftServiceHelper）。
             XposedHelpers.callStaticMethod(p, "e", ctx);
@@ -2022,6 +2049,30 @@ final class EditorHook {
             ModuleInit.log("read left sid fail " + t);
         }
         return null;
+    }
+
+    /** 左栏服务的系统 helper（旧 com.oplus.sdp.nv.p，17.24.8 起搬到 decision.util.n）。 */
+    static Class<?> leftSidHelper() {
+        try {
+            return HookTargets.first(new HookTargets.Resolver() {
+                @Override
+                public Class<?> find(String fqn) {
+                    return XposedHelpers.findClass(fqn, sClassLoader);
+                }
+            }, HookTargets.NATIVE_LEFT_SID, null);
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    /** 一个候选都加载不到时只记一次，避免每次进编辑器刷屏。 */
+    private static void warnLeftSidHelper(String where) {
+        if (sLeftSidWarned) {
+            return;
+        }
+        sLeftSidWarned = true;
+        Diag.always("editor", HookTargets.noClassMessage(
+                where + ": left-sid helper", HookTargets.NATIVE_LEFT_SID, "e"));
     }
 
     /** 编辑器 fragment（initView 记录，备用操作入口）。 */
