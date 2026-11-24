@@ -68,6 +68,10 @@ final class DefaultServiceHook {
     private static java.lang.reflect.Method mUpdateChecked;
     private static Class<?> sEntityCls;
     private static Class<?> sListCls;
+    private static Class<?> sBeanCls;
+    private static Class<?> sConfigCls;
+    /** ServiceBean 八参构造器（1.41 预览按配置现造 bean 用），拿不到就为 null。 */
+    private static java.lang.reflect.Constructor<?> sBeanCtor;
     /** 目标类是否解析成功：缺失时运行期路径显式跳过并留痕，而不是抛 NPE。 */
     private static volatile boolean sEntityReady;
     private static volatile boolean sBeanReady;
@@ -167,6 +171,8 @@ final class DefaultServiceHook {
                 int.class, int.class);
         sEntityCls = entityCls;
         sListCls = listCls;
+        sBeanCls = beanCls;
+        sConfigCls = configCls;
         sEntityReady = entityCls != null;
         sBeanReady = beanCls != null;
 
@@ -664,60 +670,145 @@ final class DefaultServiceHook {
         }
     }
 
-    /** 把 entity 的双列预览 bean 同步成当前配置（col_0 / col_1）。 */
+    /**
+     * 把 entity 的双列预览 bean 同步成当前配置（col_0 / col_1），返回实际写了几个槽位。
+     *
+     * <p>1.41：每一栏按 {@link PreviewPlan} 决定动作。关键变化是"卡池里找不到"不再
+     * 直接跳过（跳过就会把上一轮的旧卡原样留在预览里，保存时再拿它覆盖档案），
+     * 而是按配置现造一个 bean 顶上去。编辑过程中用户点选改的是 compose，
+     * 本方法只在打开编辑器那一刻跑一次，不会冲掉未保存的选择。
+     */
     @SuppressWarnings("unchecked")
-    private static void syncEntityPreview(Object entity) throws Throwable {
+    private static int syncEntityPreview(Object entity) throws Throwable {
         if (!need(sEntityReady, "DefaultServiceEntity", "preview sync")
                 || !need(sBeanReady, "ServiceBean", "preview sync")) {
-            return;
+            return 0;
         }
         android.content.Context ctx = AppContext.get();
         if (ctx == null) {
-            return;
+            return 0;
         }
         LayoutStore.Column[] wanted = LayoutStore.columnsFor(ctx, 0);
         List<Object> compose = (List<Object>) mGetComposeServices.invoke(entity);
         if (compose == null || compose.size() < 2) {
-            return;
+            Diag.log("model", "preview skip: compose has " + (compose == null ? 0 : compose.size())
+                    + " slot(s), need 2");
+            return 0;
         }
+        int writes = 0;
         for (int col = 0; col < 2; col++) {
             Object bean = compose.get(col);
+            LayoutStore.Column c = wanted == null || col >= wanted.length ? null : wanted[col];
             String want;
-            Object candidate;
-            if (col == 0) {
-                // 左栏走系统原生（模块无 col_0 配置），按桌面左栏实际同步
-                want = EditorHook.leftSidForSync();
-                candidate = want == null ? null : findLeftBean(entity, want);
-            } else {
-                LayoutStore.Column c = wanted == null ? null : wanted[1];
-                if (c == null || !c.isSet()) {
-                    continue;
-                }
+            if (c != null && c.isSet()) {
                 want = c.serviceId;
-                // 右栏优先复用点选缓存的完整 bean（可选列表部分 bean 缺配置）。
-                candidate = findRightBean(entity, c.serviceId, c.type);
+            } else if (col == 0) {
+                // 左栏在配置里没写：沿用桌面左栏的实际内容（老行为，保持兼容）
+                want = EditorHook.leftSidForSync();
+            } else {
+                want = null;
             }
-            if (want == null || bean == null || candidate == null) {
+            boolean colSet = want != null && want.length() > 0;
+            Object haveSid = bean == null ? null : sidOf(bean);
+            String have = haveSid == null ? null : String.valueOf(haveSid);
+            Object candidate = null;
+            if (colSet && !want.equals(have)) {
+                candidate = col == 0 ? findLeftBean(entity, want)
+                        : findRightBean(entity, want, c == null ? -1 : c.type);
+            }
+            int action = PreviewPlan.action(true, colSet, want, have, candidate != null);
+            if (!PreviewPlan.writes(action)) {
+                if (action == PreviewPlan.SKIP) {
+                    Diag.log("model", "preview col " + col + " skip: not configured");
+                }
                 continue;
             }
-            if (!want.equals(mGetServiceId.invoke(bean))) {
-                String name = (String) mGetName.invoke(candidate);
-                mSetServiceId.invoke(bean, want);
-                if (!TextUtils.isEmpty(name)) {
-                    mSetName.invoke(bean, name);
+            if (action == PreviewPlan.REBUILD) {
+                Object fresh = newBeanFromColumn(c, want);
+                if (fresh == null) {
+                    Diag.log("model", "preview col " + col + " rebuild failed: " + want
+                            + " (ServiceBean constructor unavailable)");
+                    continue;
                 }
-                mSetType.invoke(bean, (Integer) mGetType.invoke(candidate));
-                mSetSize.invoke(bean, (Integer) mGetSize.invoke(candidate));
-                Object cfg = mGetCardConfig.invoke(candidate);
-                if (cfg != null) {
-                    if (mSetCardConfig == null) {
-                        Diag.log("model", "skip: card config (CardConfigInfo missing)");
-                    } else {
-                        mSetCardConfig.invoke(bean, cfg);
-                    }
-                }
-                Diag.log("model", "custom tab col " + col + " synced -> " + want);
+                compose.set(col, fresh);
+                writes++;
+                Diag.always("model", "preview col " + col + " rebuilt from config -> " + want
+                        + " (not in pool)");
+                continue;
             }
+            if (bean == null) {
+                compose.set(col, candidate);
+                writes++;
+                Diag.log("model", "preview col " + col + " filled from pool -> " + want);
+                continue;
+            }
+            String name = (String) mGetName.invoke(candidate);
+            mSetServiceId.invoke(bean, want);
+            if (!TextUtils.isEmpty(name)) {
+                mSetName.invoke(bean, name);
+            }
+            mSetType.invoke(bean, (Integer) mGetType.invoke(candidate));
+            mSetSize.invoke(bean, (Integer) mGetSize.invoke(candidate));
+            Object cfg = mGetCardConfig.invoke(candidate);
+            if (cfg != null) {
+                if (mSetCardConfig == null) {
+                    Diag.log("model", "skip: card config (CardConfigInfo missing)");
+                } else {
+                    mSetCardConfig.invoke(bean, cfg);
+                }
+            }
+            writes++;
+            Diag.log("model", "custom tab col " + col + " synced -> " + want);
+        }
+        return writes;
+    }
+
+    /**
+     * 按配置现造一个 ServiceBean（卡池里找不到这张卡时用）。
+     *
+     * <p>签名取自 UMS 17.22.8：
+     * {@code <init>(String,int,String,String,int,Integer,Integer,CardConfigInfo)}。
+     * 拿不到构造器就返回 null，由调用方记一行日志后放弃这一栏——绝不回退旧 bean。
+     */
+    private static Object newBeanFromColumn(LayoutStore.Column c, String sid) {
+        if (c == null || sid == null) {
+            return null;
+        }
+        try {
+            if (sBeanCtor == null) {
+                if (sBeanCls == null) {
+                    return null;
+                }
+                Class<?> cfg = sConfigCls != null ? sConfigCls : Object.class;
+                sBeanCtor = sBeanCls.getConstructor(String.class, int.class, String.class,
+                        String.class, int.class, Integer.class, Integer.class, cfg);
+            }
+            return sBeanCtor.newInstance(sid, c.type, c.name == null ? "" : c.name, "",
+                    c.size, null, null, null);
+        } catch (Throwable t) {
+            Diag.log("model", "preview bean ctor failed: " + t);
+            return null;
+        }
+    }
+
+    /**
+     * 1.41 B：切到「自定义」时按 col_0/col_1 把 compose 双栏重排一次。
+     *
+     * @return 实际改写的槽位数（0 = 已经一致或拿不到实体）
+     */
+    static int realignCompose(String why) {
+        try {
+            Object entity = customEntity;
+            if (entity == null) {
+                Diag.always("model", "compose realign (" + why + "): no custom entity yet");
+                return 0;
+            }
+            int n = syncEntityPreview(entity);
+            Diag.always("model", "compose realign (" + why + ") rewritten=" + n);
+            return n;
+        } catch (Throwable t) {
+            Diag.always("model", "compose realign (" + why + ") failed: " + t);
+            return 0;
         }
     }
 

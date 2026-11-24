@@ -1017,6 +1017,11 @@ final class EditorHook {
                                         + " right=" + sidR
                                         + " (system h passthrough)");
                                 Diag.always("editor", "saved L=" + sidL + " R=" + sidR);
+                                // round 56（task-15 A）：确认路径上"scene slots"之前被
+                                // 去重吞掉了（槽位结果与上一次相同就不落日志），于是
+                                // 诊断时看不出 confirm 之后到底有没有走 normalizePair。
+                                // 这里强制下一轮改写把 slots 打一条，并在槽位没变时标注。
+                                SceneServiceRewriter.requestSlotLog("editor save");
                                 // 延迟补拍：launcher 的观察者/渲染管线可能晚于
                                 // 通知就绪，1.5s 后再补一轮双油门覆盖竞态。
                                 new android.os.Handler(android.os.Looper.getMainLooper())
@@ -2106,36 +2111,28 @@ final class EditorHook {
     }
 
     /**
-     * 补发决策变更通知。原生只通知 BASE_URI（带 SKIP_DESCENDANTS 标志，
-     * 不会传给注册在子路径上的观察者），这里把所有可能的决策 URI 全量
-     * 通知一遍，保证 launcher / assistantscreen 重新拉取。
+     * 补发决策变更通知，让 launcher 重拉一次卡序。
+     *
+     * <p>round 56：旧实现通知 5 个 URI，唯独缺
+     * {@code content://com.oplus.pantanal.ums.scenedecision/ai_launcher_services}
+     * ——而桌面双栏卡组的观察者恰恰注册在它上面（反编译
+     * {@code com/pantanal/server/content/sdk/a.java:105-127} +
+     * {@code SceneDecisionDao$Companion$AI_LAUNCHER_SCENE_DECISION_URI$2:11}）。
+     * 这解释了 2026-11-23 16:42 的证据：数据与 cursor 都对，通知也"发了"，
+     * 桌面不动；强停 launcher 后立刻回正。URI 列表与节流见
+     * {@link NotifyPlan} / {@link SceneNotify}。
+     *
+     * <p>编辑器保存是一次性动作，必须发出去，所以这里 force=true 跳过节流。
      */
-    
     private static void notifyDecisionRefresh() {
         try {
             Context ctx = AppContext.get();
             if (ctx == null) {
                 return;
             }
-            ContentResolver cr = ctx.getContentResolver();
-            String[] uris = {
-                    "content://com.oplus.pantanal.ums.scenedecision",
-                    "content://com.oplus.pantanal.ums.scenedecision/sceneservices",
-                    "content://com.oplus.pantanal.ums.scenedecision/scene_all_data",
-                    "content://com.oplus.pantanal.ums.decision",
-                    "content://com.oplus.pantanal.ums.decision/services",
-            };
-            int fired = 0;
-            for (int i = 0; i < uris.length; i++) {
-                try {
-                    // 第一个按原生参数（BASE_URI + 32768），其余不带标志。
-                    cr.notifyChange(android.net.Uri.parse(uris[i]), null,
-                            i == 0 ? 32768 : 0);
-                    fired++;
-                } catch (Throwable ignored) {
-                }
-            }
-            ModuleInit.log("editor decision change notified uris=" + fired);
+            SceneNotify.notifyAll(ctx, "editor", true);
+            ModuleInit.log("editor decision change notified uris="
+                    + NotifyPlan.URIS.length + " (force)");
         } catch (Throwable t) {
             ModuleInit.log("notify decision fail " + t);
         }

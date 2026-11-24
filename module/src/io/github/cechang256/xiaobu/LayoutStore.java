@@ -396,6 +396,116 @@ final class LayoutStore {
         return SwapGate.on(explicit, mode(ctx));
     }
 
+    // ---- 1.38：让 launcher 重建卡片槽位的注入闸门 ----------------
+
+    /** 闸门状态单独存一份 prefs，不写进 layout_json（避免污染用户配置）。 */
+    private static final String PREFS_INJECT = "xiaobu_unlocker_inject";
+    private static final String K_INJECT_SIG = "sig";
+    private static final String K_INJECT_COUNT = "inject_count";
+    private static final String K_INJECT_AT = "last_injected_at";
+
+    /**
+     * 判定这一次场景查询要不要给两行 cardConfig 打 isUserSelected 标记。
+     *
+     * <p>开关：{@code layout_json.features.rebuild_inject}（<b>默认开</b>，写 false 即
+     * 立刻停掉注入，不需要退版本）。次数：{@code features.rebuild_inject_max}
+     * （默认 3）。配置签名由 {@code mode} + 本次左右组合 {@code pairKey} 组成，
+     * 签名一变就重新武装；计数落 prefs，进程重启不会从 0 重来。
+     *
+     * <p>只在“这次真的注入”时写盘（一次配置变化最多 3 次），常态查询是纯内存读。
+     */
+    static InjectGate.Decision decideInject(Context ctx, String pairKey) {
+        boolean on = feature(ctx, InjectGate.FEATURE, true);
+        int max = featureInt(ctx, InjectGate.FEATURE_MAX, InjectGate.LIMIT);
+        String sig = InjectGate.signature(mode(ctx), pairKey);
+        android.content.SharedPreferences p = injectPrefs(ctx);
+        InjectGate.State prev = InjectGate.parse(
+                p.getString(K_INJECT_SIG, null),
+                p.getInt(K_INJECT_COUNT, 0),
+                p.getLong(K_INJECT_AT, 0L));
+        InjectGate.Decision d = InjectGate.next(prev, sig, on, max,
+                System.currentTimeMillis());
+        if (d.inject) {
+            try {
+                p.edit()
+                        .putString(K_INJECT_SIG, d.state.sig)
+                        .putInt(K_INJECT_COUNT, d.state.count)
+                        .putLong(K_INJECT_AT, d.state.lastAt)
+                        .apply();
+            } catch (Throwable ignored) {
+            }
+        }
+        return d;
+    }
+
+    private static android.content.SharedPreferences injectPrefs(Context ctx) {
+        return ctx.getApplicationContext()
+                .getSharedPreferences(PREFS_INJECT, Context.MODE_PRIVATE);
+    }
+
+    // ---- 1.39：模式扰动（阶段 1 检测 / 阶段 2 扰动）----------------
+
+    /** 扰动状态也单独存一份 prefs：窗内被杀/断电，下次读到的 until 已过期即正确态。 */
+    private static final String PREFS_PERTURB = "xiaobu_unlocker_perturb";
+    private static final String K_PERTURB_SIG = "sig";
+    private static final String K_PERTURB_UNTIL = "until";
+    private static final String K_PERTURB_ARMED = "armed_at";
+    private static final String K_PERTURB_COUNT = "count";
+    private static final String K_PERTURB_SINCE = "since";
+
+    static PerturbGate.State perturbState(Context ctx) {
+        try {
+            android.content.SharedPreferences p = perturbPrefs(ctx);
+            return PerturbGate.parse(
+                    p.getString(K_PERTURB_SIG, null),
+                    p.getLong(K_PERTURB_UNTIL, 0L),
+                    p.getLong(K_PERTURB_ARMED, 0L),
+                    p.getInt(K_PERTURB_COUNT, 0),
+                    p.getLong(K_PERTURB_SINCE, 0L));
+        } catch (Throwable t) {
+            // 读不出来就当没有窗口：宁可这次不扰动，也不能抛进改写主链路。
+            return PerturbGate.State.EMPTY;
+        }
+    }
+
+    static void savePerturbState(Context ctx, PerturbGate.State s) {
+        if (s == null) {
+            return;
+        }
+        try {
+            perturbPrefs(ctx).edit()
+                    .putString(K_PERTURB_SIG, s.sig)
+                    .putLong(K_PERTURB_UNTIL, s.until)
+                    .putLong(K_PERTURB_ARMED, s.armedAt)
+                    .putInt(K_PERTURB_COUNT, s.count)
+                    .putLong(K_PERTURB_SINCE, s.since)
+                    .apply();
+        } catch (Throwable ignored) {
+        }
+    }
+
+    /**
+     * 判定这一次“刚切到 custom”要不要开扰动窗口。
+     *
+     * <p>开关 {@code features.perturb_rebuild} 默认 <b>false</b>：1.39 先把检测
+     * （{@code perturb candidate}/{@code perturb useless}）跑起来，真扰动要等
+     * 真机数据证明“换成原生卡组真的会换来一次 createChildCardView”后再打开。
+     */
+    static PerturbGate.Decision startPerturb(Context ctx, String pairKey) {
+        boolean on = feature(ctx, PerturbGate.FEATURE, false);
+        PerturbGate.Decision d = PerturbGate.start(perturbState(ctx),
+                PerturbGate.signature(pairKey), on, System.currentTimeMillis());
+        if (d.serveNative) {
+            savePerturbState(ctx, d.state);
+        }
+        return d;
+    }
+
+    private static android.content.SharedPreferences perturbPrefs(Context ctx) {
+        return ctx.getApplicationContext()
+                .getSharedPreferences(PREFS_PERTURB, Context.MODE_PRIVATE);
+    }
+
     /** tabIndex -> [col0, col1]; null entries mean "leave the ROM default". */
     static Column[] columnsFor(Context ctx, int tabIndex) {
         try {

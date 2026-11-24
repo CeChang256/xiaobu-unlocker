@@ -7,7 +7,9 @@ import org.json.JSONArray;
 import org.json.JSONObject;
 
 import java.lang.reflect.Field;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import io.github.cechang256.xiaobu.xp.XC_MethodHook;
 import io.github.cechang256.xiaobu.xp.XposedBridge;
@@ -267,6 +269,15 @@ final class SceneServiceRewriter {
                         XposedBridge.log(ModuleInit.TAG + ": dswap scene fail " + t);
                     }
                 }
+
+                @Override
+                protected void afterHookedMethod(MethodHookParam param) {
+                    try {
+                        // round 55：出口 observable —— 真正交给宿主的 cursor 行序。
+                        logCursorRows(param.getResult());
+                    } catch (Throwable ignored) {
+                    }
+                }
             });
             hooked++;
         }
@@ -295,6 +306,19 @@ final class SceneServiceRewriter {
 
     /** 上一次看到的左右组合；变化即视为"用户刚改完设置"。 */
     private static String sLastPairKey;
+    /** 上一次 pairKey 时是不是 custom：区分"第一次查询"与"真的从别的模式切过来"。 */
+    private static boolean sLastPairKeyCustom;
+    /** 1.41 B：上一次做过 compose 重排的 pairKey（同一组合只做一次；只在内存里）。 */
+    private static String sLastRealignSig;
+    /**
+     * 上一次在非 custom 模式服务时，原生卡组里出现过的 cardType 集合（1.39 阶段 1）。
+     *
+     * <p>只用于回答一个判断：切到 custom 之后，如果自定义两张卡的 cardType 与原生
+     * 卡组重合，launcher 的 identity 很可能命中缓存 → 扰动白闪一次也不会重建，
+     * 此时应当记 `perturb useless` 而不是去扰动。
+     */
+    private static Set<String> sNativeTypes;
+
     /** 上一次记录「查询了但一行都没改写」的时间，用于 60 秒节流。 */
     private static long sLastNoRewriteMs;
 
@@ -332,8 +356,16 @@ final class SceneServiceRewriter {
         String pairKey = (on ? "on" : "off") + "|" + mode + "|"
                 + (viaExplicit[0] ? "explicit" : "mode") + "|"
                 + sidOf(cfgL) + "|" + sidOf(cfgR);
+        boolean justOpened = false;
+        // "刚切到 custom"：必须之前就见过一个**非 custom** 的 pairKey，否则进程
+        // 第一次查询（本来就在 custom）也会被当成切换，凭空扰动一次。
+        boolean switchedToCustom = false;
         if (!pairKey.equals(sLastPairKey)) {
+            boolean custom = LayoutStore.isCustomMode(mode);
+            switchedToCustom = sLastPairKey != null && custom && !sLastPairKeyCustom;
+            sLastPairKeyCustom = custom;
             sLastPairKey = pairKey;
+            justOpened = true;
             Diag.openWindow(5000);
             Diag.window("dswap", "config -> mode=" + mode
                     + " dswap=" + (enabled ? SwapGate.label(on, viaExplicit[0])
@@ -341,6 +373,72 @@ final class SceneServiceRewriter {
                     + " L=" + nameOf(cfgL) + "(" + sidOf(cfgL) + ")"
                     + " R=" + nameOf(cfgR) + "(" + sidOf(cfgR) + ")");
         }
+
+        // ---- 1.39：模式扰动 ------------------------------------------------
+        // 阶段 1（默认开，零副作用）：只在"刚切到 custom"这一轮判定并记日志，
+        //   告诉我们"换成原生卡组再换回来"到底有没有机会换来一次重建。
+        // 阶段 2（features.perturb_rebuild，默认关）：窗内一行都不改写，让宿主
+        //   原生卡组原样出去；窗到再正常改写 + 通知。layout_json 全程不动，
+        //   窗内被杀/断电，下一次查询读到的 until 已过期 → 直接正确态。
+        long nowMs = System.currentTimeMillis();
+        PerturbGate.State pState = LayoutStore.perturbState(ctx);
+        int pPhase = PerturbGate.phase(pState, nowMs);
+        if (pPhase == PerturbGate.PHASE_NATIVE) {
+            Diag.always("dswap", "perturb serve native, " + (pState.until - nowMs) + "ms left");
+            return;
+        }
+        if (pPhase == PerturbGate.PHASE_RESTORE) {
+            LayoutStore.savePerturbState(ctx, PerturbGate.expire(pState));
+            Diag.always("dswap", "perturb restore: serve custom");
+            SceneNotify.notifyAll(ctx, "perturb-restore", true);
+        }
+        if (switchedToCustom) {
+            String lt = cfgL == null ? "-1" : String.valueOf(cfgL.optInt("type", -1));
+            String rt = cfgR == null ? "-1" : String.valueOf(cfgR.optInt("type", -1));
+            boolean sameType = sNativeTypes != null
+                    && (sNativeTypes.contains(lt) || sNativeTypes.contains(rt));
+            if (sameType) {
+                // 坑：原生态里已经有同 cardType 的卡 → launcher 很可能命中缓存，
+                // 扰动只会白闪一次。这里明着记，不要拿它当"已修复"。
+                Diag.always("dswap", "perturb useless: same card types L=" + lt
+                        + " R=" + rt + " native=" + sNativeTypes);
+            } else if (on && cfgL != null && cfgR != null) {
+                Diag.always("dswap", "perturb candidate: would rebuild L="
+                        + sidOf(cfgL) + "/" + lt + " R=" + sidOf(cfgR) + "/" + rt
+                        + " native=" + (sNativeTypes == null ? "?" : sNativeTypes));
+                PerturbGate.Decision pd = LayoutStore.startPerturb(ctx, pairKey);
+                if (pd.serveNative) {
+                    Diag.always("dswap", "perturb " + pd.reason);
+                    SceneNotify.notifyAll(ctx, "perturb-native", true);
+                    return;
+                }
+                Diag.always("dswap", "perturb " + pd.reason);
+            }
+        }
+        // ---- 1.41 B：切到 custom 时按 col_0/col_1 重排 compose 双栏 -------------
+        // 用户"系统样式 → 自定义、不点开始编辑直接确定"时，保存路径读到的 compose
+        // 可能还是上一轮的旧卡（预览同步没触发/卡池里没有）；这里在切模式这一刻按
+        // 配置重排一次，再发一次与「确定」等价的通知，launcher 拿到的就是那对卡。
+        // 同一 pairKey 只做一次；只改内存里的 compose，不写 prefs、不碰 layout_json。
+        if (switchedToCustom) {
+            boolean feat = LayoutStore.feature(ctx, RealignGate.FEATURE, true);
+            if (RealignGate.shouldRun(feat, pairKey, sLastRealignSig)) {
+                sLastRealignSig = pairKey;
+                try {
+                    int n = DefaultServiceHook.realignCompose("switch-custom");
+                    if (n > 0) {
+                        SceneNotify.notifyAll(ctx, "realign", true);
+                    }
+                } catch (Throwable t) {
+                    // 失败只留一行，不打断本轮改写
+                    Diag.always("dswap", "compose realign failed: " + t);
+                }
+            } else {
+                Diag.window("dswap", "compose realign "
+                        + RealignGate.reason(feat, pairKey, sLastRealignSig));
+            }
+        }
+
         // 三个编辑器 tab 互不干扰：mode=custom 时改写成自定义档案；
         // mode=native 时**反向工作**——把可能残留的自定义改写恢复成系统
         // 原生内容。不能简单"罢工"：custom 模式下 guaranteed 槽被改写过，
@@ -348,11 +446,24 @@ final class SceneServiceRewriter {
         // 表现为"桌面切不回系统样式"、右栏身份与数据错配渲染成
         // "小布建议说明"（实测）。
         if (!on) {
+            // 1.39 修复：native 模式走的正是这条 `on=false` 路径（gate 由 mode 驱动），
+            // 所以在 return 之前**只读**记一次原生卡组的 cardType。不改写、不 notify、
+            // 不动任何数据；只在"刚切换/还没记录"时解析一次，不给每次查询加开销。
+            if (PerturbGate.shouldNoteNative(LayoutStore.isCustomMode(mode), justOpened,
+                    sNativeTypes != null)) {
+                sNativeTypes = typesOf((List<?>) listObj);
+            }
             Diag.window("dswap", "skip: dswap off");
             return;
         }
         if (!LayoutStore.isCustomMode(mode)) {
             Diag.window("dswap", "skip: mode=" + mode);
+            // 1.39 阶段 1：记下"原生卡组长什么样"，供下一次切到 custom 时判断
+            // 自定义两张卡的 cardType 是否与它重合（重合 → 扰动没用）。
+            // 同样只在"刚切换/还没记录"时解析（explicit dswap 覆盖时会走到这里）。
+            if (PerturbGate.shouldNoteNative(true, justOpened, sNativeTypes != null)) {
+                sNativeTypes = typesOf((List<?>) listObj);
+            }
             revertSceneList(ctx, (List<?>) listObj);
             // 模式往返的第一段（native）：系统内容已经上台，自定义两张卡
             // 已离场。等 launcher 真正拉过一次、且已过 roundms，就切回
@@ -374,49 +485,81 @@ final class SceneServiceRewriter {
             return;
         }
         List<?> list = (List<?>) listObj;
-        // 槽位映射（单侧实验定案，勿凭对调结果反推）：
-        //   桌面左栏 = 场景 210000000 的第一张非固定卡行 → col_0
-        //   桌面右栏 = 097 保证卡槽位行（policy=DYNAMIC_SUBSTITUTE）→ col_1
-        // 教训：两栏同时互换时，两种映射互为镜像、显示结果完全相同，无法
-        // 从对调结果反推；只能改单侧（另一侧保持）再看桌面，才不会误判。
-        int nR = 0, nL = 0;
-        boolean leftDone = false;
+        // 槽位 → 列：**按两行在 list 里的先后定左右**，不再按行身份硬编码。
+        // 依据：宿主 SceneDecisionProvider.setLeftRight（UMS 17.22.8 反编译
+        // :919-957）自己就是按下标组列——i==0 → list=[home,2x2] 且
+        // home.intentPosition=0；i==1 → list=[2x2,home] 且 home.intentPosition=1，
+        // 即 下标 == intentPosition == 视觉列，toCursor(:1048-1061) 按 list 顺序出行。
+        // 旧实现（"097 行 = 右栏、210000000 首张非固定卡 = 左栏"）只在宿主把
+        // 097 行排在后面时成立；native→custom 切一轮之后宿主把它排到了前面，
+        // 于是 col_1 被送到左栏、桌面与预览左右相反（设备实测 2026-11-23）。
+        // 按位置分配在旧顺序下与旧逻辑完全等价；在新顺序下自动跟着宿主换列。
+        int idxStock = -1;
+        int idxHome = -1;
         for (int i = 0; i < list.size(); i++) {
             Object o = list.get(i);
             if (o == null) {
                 continue;
             }
             String sid = getStr(o, "serviceId");
-            String scene = getStr(o, "sceneId");
-
-            // 右栏：保证卡槽位（536877097）→ col_1
-            if (cfgR != null && STOCK_SID.equals(sid)) {
-                if (!applySystemCard(ctx, o, cfgR) && !rewriteSceneEntity(o, cfgR)) {
-                    // 两条路都失败：不改写也不计数。留下原卡总比留下半新半旧
-                    // 的实体强（后者会污染 launcher 的位置记忆）。
-                    Diag.always("dswap", "rewrite skipped R sid="
-                            + cfgR.optString("serviceId"));
-                    continue;
-                }
-                nR++;
+            if (idxStock < 0 && STOCK_SID.equals(sid)) {
+                idxStock = i;
                 continue;
             }
-            if (!"210000000".equals(scene)) {
-                continue;
+            if (idxHome < 0 && "210000000".equals(getStr(o, "sceneId"))
+                    && !STOCK_SID2.equals(sid)) {
+                idxHome = i;
             }
-            if (STOCK_SID2.equals(sid)) {
-                continue;
-            }
-            if (cfgL != null && !leftDone) {
-                // 左栏：第一张非固定卡行 → col_0
-                if (!applySystemCard(ctx, o, cfgL) && !rewriteSceneEntity(o, cfgL)) {
-                    Diag.always("dswap", "rewrite skipped L sid="
-                            + cfgL.optString("serviceId"));
-                    continue;
-                }
+        }
+        int stockCol = SceneSlots.stockColumn(idxStock, idxHome);
+        // 两个槽位都在时按位置分配；只看得到一行时沿用旧的身份映射
+        // （097 → col_1、home → col_0），避免单边列表突然换列。
+        JSONObject cfgStock = stockCol == 0 ? cfgL : cfgR;
+        JSONObject cfgHome = stockCol == 0 ? cfgR : cfgL;
+        if (justOpened) {
+            Diag.window("dswap", "scene rows " + describeRows(list)
+                    + " -> 097@" + idxStock + " home@" + idxHome
+                    + " col(097)=" + (stockCol == SceneSlots.UNKNOWN
+                            ? "?" : String.valueOf(stockCol)));
+        }
+        // round 55：设备证据要求"改写前后各一条完整 rows"。形态（前 4 行的
+        // sid/scene/ip/policy/ts）一旦变化才落一条，常态 1.8 条/秒的查询不刷屏。
+        noteShape("before", list);
+        int nR = 0, nL = 0;
+        boolean okStock = idxStock >= 0 && cfgStock != null
+                && applySlot(ctx, list.get(idxStock), cfgStock,
+                        stockCol == SceneSlots.UNKNOWN ? 1 : stockCol);
+        if (okStock) {
+            if (cfgStock == cfgL) {
                 nL++;
-                leftDone = true;
+            } else {
+                nR++;
             }
+        }
+        boolean okHome = idxHome >= 0 && cfgHome != null
+                && applySlot(ctx, list.get(idxHome), cfgHome,
+                        SceneSlots.homeColumn(stockCol));
+        if (okHome) {
+            if (cfgHome == cfgL) {
+                nL++;
+            } else {
+                nR++;
+            }
+        }
+        if (okStock && okHome) {
+            // 1.38：先抓住两行实体，再做定序/注入——normalizePair 可能交换下标，
+            // 但实体引用不变，标记两行都要打到。
+            Object rowStock = list.get(idxStock);
+            Object rowHome = list.get(idxHome);
+            normalizePair(list, idxStock, idxHome, stockCol);
+            noteShape("after", list);
+            injectRebuildFlag(ctx, pairKey, rowStock, rowHome);
+        } else {
+            // round 56：这条以前完全静默——只看得到 "scene rewrote L1/R1"，
+            // 看不出"两行都改了、但定序没摆"。现在缺哪一步都留痕。
+            Diag.window("dswap", "normalize skipped: okStock=" + okStock
+                    + " okHome=" + okHome + " stockCol=" + stockCol
+                    + " idxStock=" + idxStock + " idxHome=" + idxHome);
         }
         if (cfgL != null && cfgR != null) {
             // 记录"这次真正交给桌面的左右卡"，供下一次保存判断是否只是对调。
@@ -429,6 +572,14 @@ final class SceneServiceRewriter {
             Diag.window("dswap", "scene rewrote L" + nL + "/R" + nR
                     + " L=" + (cfgL == null ? "-" : cfgL.optString("name"))
                     + " R=" + (cfgR == null ? "-" : cfgR.optString("name")));
+            // round 56：桌面把卡序缓存在 launcher 进程里，改写对了也不会自己
+            // 重读（2026-11-23 16:48 强停 launcher 立刻回正 = 铁证）。配置/模式
+            // 变了（pairKey 变）或者本进程第一次成功改写时，主动通知它重拉。
+            // 只在 pairKey 变化时发，避免"通知→查询→通知"的循环。
+            if (!pairKey.equals(sNotifiedPairKey)) {
+                sNotifiedPairKey = pairKey;
+                SceneNotify.notifyAll(ctx, "rewrite");
+            }
         } else {
             // 查询来了、却一行都没改写：说明列表里既没有保证卡槽位，也没有
             // 场景 210000000 的可用行（ROM 换过卡槽/字段时会这样）。用户看到
@@ -439,8 +590,369 @@ final class SceneServiceRewriter {
                 sLastNoRewriteMs = now;
                 Diag.always("dswap", "query without rewrite: rows=" + list.size()
                         + " want L=" + nameOf(cfgL) + "(" + sidOf(cfgL) + ")"
-                        + " R=" + nameOf(cfgR) + "(" + sidOf(cfgR) + ")");
+                        + " R=" + nameOf(cfgR) + "(" + sidOf(cfgR) + ")"
+                        + " rowsDetail=" + describeRows(list));
             }
+        }
+    }
+
+    /**
+     * 给一个槽位行套上配置里的卡，并把 intentPosition 校准成它最终所在的列
+     * （宿主 invariant：下标 == intentPosition == 视觉列）。
+     *
+     * @return true = 这次真的改写了这一行
+     */
+    private static boolean applySlot(Context ctx, Object row, JSONObject cfg, int col)
+            throws org.json.JSONException {
+        if (!applySystemCard(ctx, row, cfg) && !rewriteSceneEntity(row, cfg)) {
+            // 两条路都失败：不改写也不计数。留下原卡总比留下半新半旧
+            // 的实体强（后者会污染 launcher 的位置记忆）。
+            Diag.always("dswap", "rewrite skipped " + (col == 0 ? "L" : "R")
+                    + " sid=" + cfg.optString("serviceId"));
+            return false;
+        }
+        syncColumn(row, col);
+        return true;
+    }
+
+    /** 把槽位列号写回 intentPosition（字段类型可能是 int/long/short，按现值类型跟随）。 */
+    private static void syncColumn(Object row, int col) {
+        Object cur = readF(row, "intentPosition");
+        Object v;
+        if (cur instanceof Long) {
+            v = Long.valueOf(col);
+        } else if (cur instanceof Short) {
+            v = Short.valueOf((short) col);
+        } else {
+            v = Integer.valueOf(col);
+        }
+        setF(row, "intentPosition", v);
+    }
+
+    // ---- 1.38：让 launcher 重建卡片槽位的注入 -------------------------
+
+    /** 上一次"注入已用尽"的签名，只为把这条日志从每次查询压到一次。 */
+    private static String sInjectDoneSig;
+
+    /**
+     * 给两行 cardConfig 打 isUserSelected 标记。
+     *
+     * <p>为什么是这条路：卡片落位（layoutGravity / order）由 launcher 进程在
+     * <b>建视图时</b>算一次（childcard/o0.java H() → GroupChildCardWrapper k0），
+     * 常规刷新走 na/l.r0 的 "no need to load scene!" 直接返回，所以改写数据再多
+     * 也不会重排。而 GCP 的 sa/p.s(ServiceInfo) 为真时，na/h.z1()（由
+     * “user unlocked changed to true, restart to load scene” 触发）会
+     * setForceRebuild(true) 并整场景重载 → 子卡按当前行序重建 → 左右摆正。
+     * sa/p.s() 在 g0.j() 分支读的正是 cardConfig 里的 isUserSelected。
+     *
+     * <p>闸门（签名 + 次数上限 + 落 prefs）见 LayoutStore.decideInject；这里只管
+     * “判定通过就把两行都打上标记并留一条 diag”。
+     */
+    private static void injectRebuildFlag(Context ctx, String pairKey,
+            Object rowStock, Object rowHome) {
+        InjectGate.Decision d;
+        try {
+            d = LayoutStore.decideInject(ctx, pairKey);
+        } catch (Throwable t) {
+            Diag.always("dswap", "inject decision failed: " + t);
+            return;
+        }
+        if (!d.inject) {
+            if (d.reason.startsWith("done") && !d.sig().equals(sInjectDoneSig)) {
+                sInjectDoneSig = d.sig();
+                Diag.always("dswap", "inject done, stops here: " + d.reason
+                        + " (features." + InjectGate.FEATURE + "=false 可立即关掉)");
+            }
+            return;
+        }
+        int rows = 0;
+        if (stampRow(rowStock, d.state.lastAt)) {
+            rows++;
+        }
+        if (stampRow(rowHome, d.state.lastAt)) {
+            rows++;
+        }
+        Diag.always("dswap", "inject isUserSelected " + d.reason + " count="
+                + d.state.count + " rows=" + rows + "/2 sig=" + d.sig());
+    }
+
+    /** 单行打标记；cardConfig 坏到重建不出来时保持原值并留痕（绝不抛）。 */
+    private static boolean stampRow(Object row, long now) {
+        try {
+            String sid = getStr(row, "serviceId");
+            String cur = getStr(row, "cardConfig");
+            int size = 1;
+            try {
+                String sz = getStr(row, "supportSize");
+                if (sz != null && sz.trim().length() > 0) {
+                    size = Integer.parseInt(sz.trim());
+                }
+            } catch (Throwable ignored) {
+            }
+            String next = CardConfigStamp.stamp(cur, sid, size, now);
+            if (next == null) {
+                Diag.always("dswap", "inject skipped (cardConfig unrebuildable) sid=" + sid);
+                return false;
+            }
+            setF(row, "cardConfig", next);
+            return true;
+        } catch (Throwable t) {
+            Diag.always("dswap", "inject failed: " + t);
+            return false;
+        }
+    }
+
+    /** 场景列表的行序摘要（只在前 4 行内），给 diag 定位"宿主把哪行排在哪"。 */
+    private static String describeRows(List<?> list) {
+        StringBuilder sb = new StringBuilder("[");
+        int n = Math.min(list.size(), 4);
+        for (int i = 0; i < n; i++) {
+            Object o = list.get(i);
+            if (i > 0) {
+                sb.append(' ');
+            }
+            if (o == null) {
+                sb.append(i).append("=null");
+                continue;
+            }
+            sb.append(i).append('=').append(getStr(o, "serviceId"))
+                    .append("(scene=").append(getStr(o, "sceneId"))
+                    .append(",ip=").append(getStr(o, "intentPosition"))
+                    .append(",policy=").append(getStr(o, "policyName"))
+                    .append(",ts=").append(getStr(o, "timestamp"))
+                    .append(')');
+        }
+        if (list.size() > n) {
+            sb.append(" +").append(list.size() - n);
+        }
+        return sb.append(']').toString();
+    }
+
+    /**
+     * 一组行里出现过的 cardType 集合（1.39 阶段 1 用）。
+     *
+     * <p>cardType 取自行的 cardConfig JSON 的第一段（宿主下发形态：
+     * `[{"type":10000492,…}]`）。解析不出来就跳过该行——这里只服务于一条
+     * 诊断日志，绝不因为脏数据抛进改写主链路。
+     */
+    private static Set<String> typesOf(List<?> list) {
+        Set<String> out = new LinkedHashSet<>();
+        if (list == null) {
+            return out;
+        }
+        int n = Math.min(list.size(), 6);
+        for (int i = 0; i < n; i++) {
+            Object o = list.get(i);
+            if (o == null) {
+                continue;
+            }
+            try {
+                String raw = getStr(o, "cardConfig");
+                if (TextUtils.isEmpty(raw)) {
+                    continue;
+                }
+                JSONArray arr = new JSONArray(raw);
+                for (int k = 0; k < arr.length(); k++) {
+                    JSONObject e = arr.optJSONObject(k);
+                    if (e != null && e.has("type")) {
+                        out.add(String.valueOf(e.optInt("type", -1)));
+                    }
+                }
+            } catch (Throwable ignored) {
+                // 一行解析失败不影响其余行
+            }
+        }
+        return out;
+    }
+
+    /** 上一次记录的"改写前/改写后"行形态，用于只在形态变化时落一条 diag。 */
+    private static String sLastShapeBefore;
+    private static String sLastShapeAfter;
+    private static String sLastSlots;
+    /** 到这一刻之前，即使槽位结果没变也要落一条 "scene slots"（round 56）。 */
+    private static volatile long sSlotLogForceUntil;
+    /** 上一次因为"配置/模式变化"通知过 launcher 的 pairKey（round 56）。 */
+    private static String sNotifiedPairKey;
+
+    /**
+     * round 56（task-15 A）：强制下一轮改写把槽位结果写进 diag.log。
+     *
+     * <p>背景：编辑器点确定之后，launcher 会立刻重新查询一次，那一轮的槽位
+     * 结果通常与上一轮**完全相同**，于是被 {@code sLastSlots} 去重吞掉，
+     * 设备侧只看得到 "scene rewrote"、看不到 "scene slots"，无法判断
+     * normalizePair 到底走没走。改成"确认后必定留一条"，并标注是否与上次相同。
+     */
+    static void requestSlotLog(String why) {
+        sSlotLogForceUntil = System.currentTimeMillis() + 8000L;
+        Diag.log("dswap", "slot log forced (" + why + ")");
+    }
+
+    private static void noteShape(String tag, List<?> list) {
+        String s = describeRows(list);
+        if ("before".equals(tag)) {
+            if (!s.equals(sLastShapeBefore)) {
+                sLastShapeBefore = s;
+                Diag.always("dswap", "scene before " + s);
+            }
+        } else if (!s.equals(sLastShapeAfter)) {
+            sLastShapeAfter = s;
+            Diag.always("dswap", "scene after " + s);
+        }
+    }
+
+    /**
+     * 两行都改写完之后，把"谁是左、谁是右"在**所有可能被下游读到的定序键**上
+     * 摆正一次：列表下标 / intentPosition / policyName / timestamp / createTime。
+     *
+     * <p>为什么四条一起摆（round 55）：2026-11-23 的设备证据里，正确态与错误态
+     * 的列表下标（home@0、097@1）、intentPosition（0/1）完全相同，桌面前后却
+     * 相反；而 launcher（17.5.4）里既没有 intentPosition 的读者，也没有
+     * policyName 的读者，只有"按 cursor 行序建卡组"这一条路，说明真正定序的
+     * 字段是被 {@link #PRESERVE_FIELDS} 原样留下的某一个（policyName 或
+     * timestamp/createTime）。只押一条会再错一轮，所以四条一起对齐；对下游
+     * 只用其中一条的情况下，其余三条是无害的冗余。
+     */
+    private static void normalizePair(List<?> list, int idxStock, int idxHome, int stockCol) {
+        if (stockCol != 0 && stockCol != 1) {
+            return;
+        }
+        Object stockRow = list.get(idxStock);
+        Object homeRow = list.get(idxHome);
+        // 槽位语义（宿主自己的词表）：保证卡槽 = DYNAMIC_SUBSTITUTE，
+        // 用户自定义槽 = SUBSTITUTE（设备正确态下 home 行就是它）。已有非空
+        // policy 一律保留，只补空值，避免覆盖宿主自己的策略标记。
+        setF(stockRow, "policyName", SceneOrder.policyFor(getStr(stockRow, "policyName"), true));
+        setF(homeRow, "policyName", SceneOrder.policyFor(getStr(homeRow, "policyName"), false));
+
+        Object left = stockCol == 0 ? stockRow : homeRow;
+        Object right = stockCol == 0 ? homeRow : stockRow;
+        int leftIdx = stockCol == 0 ? idxStock : idxHome;
+        int rightIdx = stockCol == 0 ? idxHome : idxStock;
+        boolean changed = false;
+
+        changed |= orderLong(left, right, "timestamp");
+        changed |= orderLong(left, right, "createTime");
+
+        // 行序：左行放回 index 0。宿主 toCursor 按 list 顺序出行，桌面按行序建卡组；
+        // 万一下游确实看下标，这一步让下标与 ip 一致。
+        if (leftIdx > rightIdx) {
+            java.util.Collections.swap(list, leftIdx, rightIdx);
+            changed = true;
+        }
+        String slots = "scene slots L=" + getStr(left, "serviceId") + "@0"
+                + "(policy=" + getStr(left, "policyName") + ",ts=" + getStr(left, "timestamp") + ")"
+                + " R=" + getStr(right, "serviceId") + "@1"
+                + "(policy=" + getStr(right, "policyName") + ",ts=" + getStr(right, "timestamp") + ")"
+                + (changed ? " (order keys realigned)" : "");
+        boolean same = slots.equals(sLastSlots);
+        boolean force = System.currentTimeMillis() < sSlotLogForceUntil;
+        if (!same || force) {
+            sLastSlots = slots;
+            Diag.always("dswap", slots + (same ? " (unchanged, forced)" : ""));
+            if (force) {
+                sSlotLogForceUntil = 0L;
+            }
+        }
+    }
+
+    /**
+     * 让左行严格早于右行：左旧右新。两行值相同时左行减 1ms（只动毫秒级，
+     * 不影响宿主的时效判断）。
+     *
+     * @return true = 真的写过了
+     */
+    private static boolean orderLong(Object left, Object right, String field) {
+        long tl = getLong(left, field);
+        long tr = getLong(right, field);
+        if (tl == Long.MIN_VALUE || tr == Long.MIN_VALUE) {
+            return false;
+        }
+        if (!SceneOrder.needsSwap(tl, tr)) {
+            return false;
+        }
+        if (tl == tr) {
+            setLongLike(left, field, SceneOrder.leftWhenEqual(tl));
+            return true;
+        }
+        setLongLike(left, field, tr);
+        setLongLike(right, field, tl);
+        return true;
+    }
+
+    /** 读 long 字段；个别 ROM 的实体把它声明成 int/Integer/String。 */
+    private static long getLong(Object o, String field) {
+        Object v = readF(o, field);
+        if (v instanceof Number) {
+            return ((Number) v).longValue();
+        }
+        if (v instanceof String) {
+            try {
+                return Long.parseLong((String) v);
+            } catch (Throwable ignored) {
+                return Long.MIN_VALUE;
+            }
+        }
+        return Long.MIN_VALUE;
+    }
+
+    /** 按现值类型写回 long（int / short / long / String 都能跟）。 */
+    private static void setLongLike(Object o, String field, long value) {
+        Object cur = readF(o, field);
+        if (cur instanceof Integer) {
+            setF(o, field, Integer.valueOf((int) value));
+        } else if (cur instanceof Short) {
+            setF(o, field, Short.valueOf((short) value));
+        } else if (cur instanceof String) {
+            setF(o, field, String.valueOf(value));
+        } else {
+            setF(o, field, Long.valueOf(value));
+        }
+    }
+
+    /**
+     * toCursor 出口处把**真正交出去的 cursor 行序**记下来（round 55 的新增可观测量）。
+     * 之前只有"改写前后 rows"，看不到宿主最终拿到的那一份；这条与
+     * "scene after" 一起，能区分"改写没落到宿主"和"宿主自己又重排"。
+     */
+    private static String sLastCursorShape;
+
+    private static void logCursorRows(Object result) {
+        if (!(result instanceof android.database.Cursor)) {
+            return;
+        }
+        android.database.Cursor c = (android.database.Cursor) result;
+        try {
+            int pos = c.getPosition();
+            StringBuilder sb = new StringBuilder("[");
+            int n = 0;
+            int iSid = c.getColumnIndex("serviceId");
+            int iIp = c.getColumnIndex("intentPosition");
+            int iPol = c.getColumnIndex("policyName");
+            int iTs = c.getColumnIndex("timestamp");
+            boolean first = true;
+            if (c.moveToFirst()) {
+                do {
+                    if (!first) {
+                        sb.append(' ');
+                    }
+                    first = false;
+                    sb.append(n).append('=');
+                    sb.append(iSid >= 0 ? c.getString(iSid) : "?");
+                    sb.append("(ip=").append(iIp >= 0 ? c.getString(iIp) : "?");
+                    sb.append(",policy=").append(iPol >= 0 ? c.getString(iPol) : "?");
+                    sb.append(",ts=").append(iTs >= 0 ? c.getString(iTs) : "?");
+                    sb.append(')');
+                    n++;
+                } while (n < 4 && c.moveToNext());
+            }
+            sb.append(']');
+            c.moveToPosition(pos);
+            String s = sb.toString();
+            if (!s.equals(sLastCursorShape)) {
+                sLastCursorShape = s;
+                Diag.always("dswap", "cursor out " + s);
+            }
+        } catch (Throwable ignored) {
         }
     }
 
